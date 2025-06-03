@@ -396,8 +396,8 @@ for dataset_name, config in datasets.items():
     model = build_siamese_network(IMG_SHAPE)
     model.compile(
         optimizer=Adam(learning_rate=0.0001),
-        loss=SparseCategoricalCrossentropy(),
-        metrics=[SparseCategoricalAccuracy()]
+        loss=SparseCategoricalCrossentropy(name="Loss"),
+        metrics=[SparseCategoricalAccuracy(name="Accuracy")]
     )
 
     # ========== Training ==========
