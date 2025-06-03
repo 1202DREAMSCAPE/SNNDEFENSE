@@ -26,8 +26,6 @@ from sklearn.preprocessing import MinMaxScaler
 import umap.umap_ as umap
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
-from collections import defaultdict
-
 
 np.random.seed(1337)
 random.seed(1337)
@@ -62,82 +60,74 @@ def create_base_network(input_shape):
         layers.Dense(1024, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.0005)),
         layers.Dropout(0.5),
         layers.Dense(128, activation='linear', kernel_regularizer=tf.keras.regularizers.l2(0.0005))  # Final embedding
-    ], name="base_network")
+    ])
     return model
 
 def build_siamese_network(input_shape):
-    """
-    Siamese network using no explicit distance metric.
-    Combines embeddings through dense layers and uses softmax for classification.
-    Aligned with the 2024 study by Nasr et al.
-    """
     base_network = create_base_network(input_shape)
 
-    # Two inputs: image A and image B
-    input_a = Input(shape=input_shape)
-    input_b = Input(shape=input_shape)
+    # Triplet inputs
+    anchor_input = Input(shape=input_shape, name='anchor_input')
+    positive_input = Input(shape=input_shape, name='positive_input')
+    negative_input = Input(shape=input_shape, name='negative_input')
 
-    # Step 2a + 2b: Pass both inputs through the same CNN base
-    encoded_a = base_network(input_a)
-    encoded_b = base_network(input_b)
+    encoded_anchor = base_network(anchor_input)
+    encoded_positive = base_network(positive_input)
+    encoded_negative = base_network(negative_input)
 
-    # Step 2c: Combine outputs (e.g., concatenation)
-    combined = layers.Concatenate()([encoded_a, encoded_b])
+    # L2 Normalization 
+    encoded_anchor = tf.keras.layers.Lambda(lambda x: tf.math.l2_normalize(x, axis=1))(encoded_anchor)
+    encoded_positive = tf.keras.layers.Lambda(lambda x: tf.math.l2_normalize(x, axis=1))(encoded_positive)
+    encoded_negative = tf.keras.layers.Lambda(lambda x: tf.math.l2_normalize(x, axis=1))(encoded_negative)
 
-    # Dense layer to learn similarity from combined embeddings
-    x = layers.Dense(32, activation='relu')(combined)
+    # Output all three embeddings
+    model = Model(inputs=[anchor_input, positive_input, negative_input],
+                  outputs=[encoded_anchor, encoded_positive, encoded_negative])
 
-    # Step 2d: Final classification layer (genuine vs forged)
-    output = layers.Dense(2, activation='softmax')(x)
-
-    # Full Siamese model
-    model = Model(inputs=[input_a, input_b], outputs=output)
     return model
+
+def triplet_loss(margin=0.7):
+    def loss(y_true, y_pred):
+        anchor, positive, negative = y_pred
+        pos_dist = tf.reduce_sum(tf.square(anchor - positive), axis=1)
+        neg_dist = tf.reduce_sum(tf.square(anchor - negative), axis=1)
+        return tf.reduce_mean(tf.maximum(pos_dist - neg_dist + margin, 0.0))
+    return loss
+
+
     
 def evaluate_classification_metrics(y_true, y_pred_probs, threshold=0.5):
     """
-    Evaluate binary classification metrics from softmax probability outputs.
-    Handles edge cases where only one class may be present.
+    Evaluate classification metrics for binary softmax output.
     """
-    # Predicted labels: argmax over softmax output (e.g., [p0, p1])
+    # Predicted labels: take argmax (0 = genuine, 1 = forged)
     y_pred = np.argmax(y_pred_probs, axis=1)
 
-    # Accuracy and F1 score
+    # Accuracy & F1
     acc = accuracy_score(y_true, y_pred)
-    f1 = f1_score(y_true, y_pred, zero_division=0)
+    f1 = f1_score(y_true, y_pred)
 
-    # ROC AUC: only valid if both classes exist in y_true
-    if len(np.unique(y_true)) == 2:
-        auc = roc_auc_score(y_true, y_pred_probs[:, 1])
-        fpr, tpr, thresholds = roc_curve(y_true, y_pred_probs[:, 1])
-        fnr = 1 - tpr
-        eer_idx = np.nanargmin(np.abs(fnr - fpr))
-        eer = fpr[eer_idx]
-        eer_threshold = thresholds[eer_idx]
-    else:
-        auc = None
-        eer = None
-        eer_threshold = None
-        print("⚠ ROC AUC and EER not computed (only one class in y_true)")
+    # ROC AUC (use probability of positive class, assumed class 1 = forged)
+    auc = roc_auc_score(y_true, y_pred_probs[:, 1])
 
-    # Confusion matrix with forced labels
-    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
-    if cm.shape == (2, 2):
-        tn, fp, fn, tp = cm.ravel()
-        far = fp / (fp + tn + 1e-6)
-        frr = fn / (fn + tp + 1e-6)
-    else:
-        tn = fp = fn = tp = far = frr = 0.0
-        print("⚠ Confusion matrix incomplete (only one class present)")
+    # FAR / FRR
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+    far = fp / (fp + tn + 1e-6)  # False accept: forged accepted as genuine
+    frr = fn / (fn + tp + 1e-6)  # False reject: genuine rejected as forged
 
-    # Print metrics
+    # EER: where FAR = FRR
+    fpr, tpr, thresholds = roc_curve(y_true, y_pred_probs[:, 1])
+    fnr = 1 - tpr
+    eer_threshold = thresholds[np.nanargmin(np.abs(fnr - fpr))]
+    eer = fpr[np.nanargmin(np.abs(fnr - fpr))]
+
     print("🔎 Evaluation Metrics:")
     print(f"✅ Accuracy:  {acc:.4f}")
     print(f"✅ F1 Score:  {f1:.4f}")
-    print(f"✅ ROC AUC:   {auc:.4f}" if auc is not None else "❌ ROC AUC:   Not available")
+    print(f"✅ ROC AUC:   {auc:.4f}")
     print(f"✅ FAR:       {far:.4f}")
     print(f"✅ FRR:       {frr:.4f}")
-    print(f"✅ EER:       {eer:.4f} at threshold {eer_threshold:.4f}" if eer is not None else "❌ EER:       Not available")
+    print(f"✅ EER:       {eer:.4f} at threshold {eer_threshold:.4f}")
 
     return {
         "accuracy": acc,
@@ -183,11 +173,10 @@ def compute_edge_count(image):
     edges = cv2.Canny((image * 255).astype(np.uint8), 50, 150)
     return np.sum(edges > 0)
 
-def generate_sop1_outputs(generator, 
-                          save_path="outputs/edge_count_summary.csv", 
-                          avg_path="outputs/edge_count_averages.csv"):
+# ========== Sample and Process Images from Test Writers ==========
+
+def generate_sop1_outputs(generator):
     rows = [["Writer", "Image", "Original_EdgeCount", "Normalized_EdgeCount"]]
-    edge_stats = defaultdict(lambda: {"original": [], "normalized": []})
 
     for dataset_path, writer in generator.test_writers:
         for label_type in ["genuine", "forged"]:
@@ -206,46 +195,27 @@ def generate_sop1_outputs(generator,
                 original = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
                 if original is None:
                     continue
-
                 resized = cv2.resize(original, (220, 155))
                 normalized = minmax_normalize(resized)
 
+                # Save comparisons
                 filename = f"writer{writer}_{label_type}_{os.path.splitext(fname)[0]}"
                 plot_image_comparison(resized, normalized, filename)
                 plot_histograms(resized, normalized, filename)
 
-                # Edge Count Calculation
+                # Edge Count
                 edge_orig = compute_edge_count(resized)
                 edge_norm = compute_edge_count(normalized)
-
-                # Save raw per-image results
                 rows.append([f"writer_{writer}", fname, edge_orig, edge_norm])
-                edge_stats[f"writer_{writer}"]["original"].append(edge_orig)
-                edge_stats[f"writer_{writer}"]["normalized"].append(edge_norm)
-
                 print(f"[{filename}] Edges — Original: {edge_orig}, Normalized: {edge_norm}")
 
-    # Save raw image-level edge counts
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    with open(save_path, "w", newline="") as f:
-        csv_writer = csv.writer(f)
-        csv_writer.writerows(rows)
-    print(f"\n✅ Edge count summary saved to {save_path}")
+    # Save edge counts summary
+    with open(EDGE_LOG_PATH, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerows(rows)
+    print(f"\n✅ Edge count summary saved to {EDGE_LOG_PATH}")
 
-    # Compute and save average edge counts per writer
-    avg_rows = [["Writer", "Avg_Original_EdgeCount", "Avg_Normalized_EdgeCount"]]
-    for writer_id, stats in edge_stats.items():
-        avg_orig = np.mean(stats["original"])
-        avg_norm = np.mean(stats["normalized"])
-        avg_rows.append([writer_id, round(avg_orig, 2), round(avg_norm, 2)])
-
-    with open(avg_path, "w", newline="") as f:
-        csv_writer = csv.writer(f)
-        csv_writer.writerows(avg_rows)
-    print(f"📊 Per-writer average edge counts saved to {avg_path}")
-
-def compute_distance_distributions(model, generator, dataset_name, base_output_dir="outputs/sop2", max_samples=5000):
-    output_dir = os.path.join(base_output_dir, dataset_name)
+def compute_distance_distributions(model, generator, dataset_name, output_dir="sop2_outputs", max_samples=5000):
     os.makedirs(output_dir, exist_ok=True)
 
     # Step 1: Get unbatched test data
@@ -257,8 +227,11 @@ def compute_distance_distributions(model, generator, dataset_name, base_output_d
     base_model = model.get_layer("base_network")
     embeddings = base_model.predict(X_test, batch_size=128, verbose=0)
 
-    # Step 3: Compute distances
-    intra_dists, inter_dists, seen = [], [], 0
+    # Step 3: Compute intra-class and inter-class distances
+    intra_dists = []
+    inter_dists = []
+    seen = 0
+
     for i in range(len(embeddings)):
         for j in range(i + 1, len(embeddings)):
             if seen >= max_samples:
@@ -270,7 +243,7 @@ def compute_distance_distributions(model, generator, dataset_name, base_output_d
                 inter_dists.append(dist)
             seen += 1
 
-    # Step 4: Histogram plot
+    # Step 4: Plot histogram of distances
     plt.figure(figsize=(8, 5))
     sns.histplot(intra_dists, label='Genuine-Genuine', color='blue', kde=True, stat="density", bins=50)
     sns.histplot(inter_dists, label='Genuine-Forged', color='red', kde=True, stat="density", bins=50)
@@ -279,34 +252,31 @@ def compute_distance_distributions(model, generator, dataset_name, base_output_d
     plt.ylabel('Density')
     plt.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "distance_distribution.png"))
+    plt.savefig(os.path.join(output_dir, f"{dataset_name}_distance_distribution.png"))
     plt.close()
 
-    # Step 5: UMAP visualization
+    # Step 5: UMAP plot
     reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, metric='euclidean')
     embedding_2d = reducer.fit_transform(embeddings)
+
     plt.figure(figsize=(8, 6))
     scatter = plt.scatter(embedding_2d[:, 0], embedding_2d[:, 1], c=y_test, cmap='tab20', s=10)
     plt.colorbar(scatter, label="Writer ID")
     plt.title(f'UMAP of Embeddings - {dataset_name}')
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "umap.png"))
+    plt.savefig(os.path.join(output_dir, f"{dataset_name}_umap.png"))
     plt.close()
 
-    # Step 6: Save stats
-    stats_path = os.path.join(output_dir, "distance_stats.txt")
+    # Step 6: Save intra/inter class stats
+    stats_path = os.path.join(output_dir, f"{dataset_name}_distance_stats.txt")
     with open(stats_path, "w") as f:
         f.write(f"Intra-class: mean={np.mean(intra_dists):.4f}, std={np.std(intra_dists):.4f}\n")
         f.write(f"Inter-class: mean={np.mean(inter_dists):.4f}, std={np.std(inter_dists):.4f}\n")
 
-    print(f"📊 Distance Distribution Outputs saved to {output_dir}")
+def generate_sop3_curves(history, dataset_name):
+    os.makedirs("sop3_outputs", exist_ok=True)
 
-
-def generate_sop3_curves(history, dataset_name, base_output_dir="outputs/sop3"):
-    output_dir = os.path.join(base_output_dir, dataset_name)
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Accuracy Curve
+    # Training vs Validation Accuracy
     acc = history.history.get('sparse_categorical_accuracy') or history.history.get('accuracy')
     val_acc = history.history.get('val_sparse_categorical_accuracy') or history.history.get('val_accuracy')
 
@@ -318,10 +288,10 @@ def generate_sop3_curves(history, dataset_name, base_output_dir="outputs/sop3"):
     plt.ylabel('Accuracy')
     plt.legend()
     plt.grid(True)
-    plt.savefig(os.path.join(output_dir, "accuracy_curve.png"))
+    plt.savefig(f"sop3_outputs/{dataset_name}_accuracy_curve.png")
     plt.close()
 
-    # Loss Curve
+    # Training Loss Curve
     loss = history.history['loss']
     val_loss = history.history['val_loss']
 
@@ -333,11 +303,8 @@ def generate_sop3_curves(history, dataset_name, base_output_dir="outputs/sop3"):
     plt.ylabel('Loss')
     plt.legend()
     plt.grid(True)
-    plt.savefig(os.path.join(output_dir, "loss_curve.png"))
+    plt.savefig(f"sop3_outputs/{dataset_name}_loss_curve.png")
     plt.close()
-
-    print(f"📈 Validation Accuracy curves saved to {output_dir}")
-
 
 # Parameters
 BATCH_SIZE = 128
@@ -366,6 +333,7 @@ datasets = {
      }
 }
 
+
 results = []
 
 for dataset_name, config in datasets.items():
@@ -379,7 +347,7 @@ for dataset_name, config in datasets.items():
         batch_sz=BATCH_SIZE,
     )
     pairs, labels = generator.generate_pairs()
-    labels = np.array(labels).astype(np.int32)
+    labels = np.array(labels).astype(np.float32)
 
     # Split data
     val_split = int(0.9 * len(pairs))
@@ -400,6 +368,13 @@ for dataset_name, config in datasets.items():
         metrics=[SparseCategoricalAccuracy()]
     )
 
+    # Callbacks
+    checkpoint_cb = ModelCheckpoint(
+        os.path.join(weights_dir, f"{dataset_name}_best_model.h5"),
+        save_best_only=True, monitor="val_loss", verbose=1
+    )
+    earlystop_cb = EarlyStopping(patience=3, restore_best_weights=True)
+
     # ========== Training ==========
     start_time = time.time()
     history = model.fit(
@@ -407,36 +382,35 @@ for dataset_name, config in datasets.items():
         validation_data=([val_img1, val_img2], val_labels),
         batch_size=BATCH_SIZE,
         epochs=EPOCHS,
+        callbacks=[checkpoint_cb, earlystop_cb],
         verbose=2
     )
     train_time = time.time() - start_time
-    # ========== SOP 1 ==========
-    print(f"\n📊 Running SOP 1 Evaluation for {dataset_name}")
-    generate_sop1_outputs(
-        generator,
-        save_path=f"outputs/sop1/{dataset_name}_edge_count_summary.csv",
-        avg_path=f"outputs/sop1/{dataset_name}_edge_count_averages.csv"
-    )
-
-    # ========== SOP 3 ==========
-    print(f"\n📈 Generating SOP 3 Curves for {dataset_name}")
+    generate_sop1_outputs(generator)
     generate_sop3_curves(history, dataset_name)
 
-    # ========== SOP 2 Evaluation (Writer-Independent) ==========
-    print(f"\n🔍 Running SOP 2 Evaluation for {dataset_name}")
+    # ========== Save Final Model ==========
+    model.save(os.path.join(weights_dir, f"{dataset_name}_final_model.h5"))
 
-    test_pairs, test_labels = generator.generate_pairs(split='test')
+    # SOP 1 Visualizations
+    generate_sop1_outputs(generator)
+
+    # SOP 2 Evaluation
+    X_test, y_test = generator.get_unbatched_data()
+    test_pairs, test_labels = [], []
+    for i in range(0, len(X_test) - 1, 2):
+        test_pairs.append((X_test[i], X_test[i + 1]))
+        test_labels.append(1 if y_test[i] == y_test[i + 1] else 0)
+
     test_img1 = np.array([pair[0] for pair in test_pairs])
     test_img2 = np.array([pair[1] for pair in test_pairs])
     test_labels = np.array(test_labels)
 
-    print("SOP 2 Label Distribution:", dict(zip(*np.unique(test_labels, return_counts=True))))
-    if len(np.unique(test_labels)) < 2:
-        print("⚠ Skipping SOP 2 evaluation — only one class present.")
-    else:
-        y_pred_probs = model.predict([test_img1, test_img2], batch_size=128)
-        metrics = evaluate_classification_metrics(test_labels, y_pred_probs)
-        compute_distance_distributions(model, generator, dataset_name)
-        results.append((dataset_name, metrics))
-        print(f"✅ SOP 2 Evaluation Complete for {dataset_name}")
-        print(metrics)
+    y_pred_probs = model.predict([test_img1, test_img2], batch_size=128)
+    metrics = evaluate_classification_metrics(test_labels, y_pred_probs, dataset_name, metrics_dir)
+
+    # SOP 2 Distance Distribution
+    compute_distance_distributions(model, test_img1, test_img2, test_labels, dataset_name, metrics_dir)
+
+    # Placeholder for results collection if needed
+    results.append((dataset_name, metrics))

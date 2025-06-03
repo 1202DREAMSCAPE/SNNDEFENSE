@@ -1,1 +1,6 @@
 /Dataset
+/venv
+/sop1_outputs
+/sop2_outputs
+/sop3_outputs
+/base_weights_softmax

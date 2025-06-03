@@ -7,8 +7,9 @@ import pandas as pd
 import skimage
 from skimage.measure import shannon_entropy
 import matplotlib.pyplot as plt
-from sklearn.preprocessing import MinMaxScaler
-
+from utils import (
+    add_noise_to_image
+)
 #import faiss
 
 # Ensure reproducibility
@@ -125,65 +126,11 @@ class SignatureDataGenerator:
         return np.array(images), np.array(writer_ids)
 
     def get_train_data(self):
-        """
-        Generate positive and negative pairs for contrastive training.
-        """
-        # print("📚 Training Writers Used:", sorted(set(writer for _, writer in self.train_writers))) 
-        def gen():
-            label_to_images = {}
-            for dataset_path, writer in self.train_writers:
-                for label_type in ["genuine", "forged"]:
-                    img_dir = os.path.join(dataset_path, f"writer_{writer:03d}", label_type)
-                    if not os.path.exists(img_dir):
-                        continue
-                    for fn in os.listdir(img_dir):
-                        img_path = os.path.join(img_dir, fn)
-                        img = self.preprocess_image(img_path)
-                        label_to_images.setdefault(writer, []).append(img)
-
-            writer_ids = list(label_to_images.keys())
-
-            # Positive and negative pair generation
-            for writer in writer_ids:
-                imgs = label_to_images[writer]
-                if len(imgs) > 1:
-                    for i in range(len(imgs) - 1):
-                        yield (imgs[i], imgs[i + 1]), 1  # Positive pair
-
-            for _ in range(len(writer_ids)):
-                w1, w2 = random.sample(writer_ids, 2)
-                img1 = random.choice(label_to_images[w1])
-                img2 = random.choice(label_to_images[w2])
-                yield (img1, img2), 0  # Negative pair
-
-        return tf.data.Dataset.from_generator(
-            gen,
-            output_signature=(
-                (tf.TensorSpec(shape=(None, None, 1), dtype=tf.float32),  # image1
-                tf.TensorSpec(shape=(None, None, 1), dtype=tf.float32)),  # image2
-                tf.TensorSpec(shape=(), dtype=tf.int32)  # label
-            )
-        )
-
-    def get_train_data_with_labels(self):
-        """
-        Return all training images and their writer IDs (not binary labels).
-        Used for contrastive pair generation.
-        """
-        images, writer_ids = [], []
-        for dataset_path, writer in self.train_writers:
-            for label_type in ["genuine", "forged"]:
-                img_dir = os.path.join(dataset_path, f"writer_{writer:03d}", label_type)
-                if not os.path.exists(img_dir):
-                    continue
-                for fn in os.listdir(img_dir):
-                    img_path = os.path.join(img_dir, fn)
-                    images.append(self.preprocess_image(img_path))
-                    writer_ids.append(writer)
-        return np.array(images), np.array(writer_ids)
+        """Generate triplet training data using TensorFlow Dataset."""
+        return self.get_triplet_data(self.train_writers).repeat().prefetch(tf.data.experimental.AUTOTUNE)
 
     def get_test_data(self):
-        """Fetch test data"""
+        """Fetch test data WITHOUT generating triplets (to keep it untouched)."""
         test_images = []
         test_labels = []
 
@@ -205,22 +152,6 @@ class SignatureDataGenerator:
                     test_labels.append(1)
 
         return tf.data.Dataset.from_tensor_slices((np.array(test_images), np.array(test_labels))).batch(self.batch_sz)
-    
-    def get_test_data_with_labels(self):
-        """
-        Return test images and their writer IDs (used for generating SOP 2 pairs).
-        """
-        images, writer_ids = [], []
-        for dataset_path, writer in self.test_writers:
-            for label_type in ["genuine", "forged"]:
-                img_dir = os.path.join(dataset_path, f"writer_{writer:03d}", label_type)
-                if not os.path.exists(img_dir):
-                    continue
-                for fn in os.listdir(img_dir):
-                    img_path = os.path.join(img_dir, fn)
-                    images.append(self.preprocess_image(img_path))
-                    writer_ids.append(writer)
-        return np.array(images), np.array(writer_ids)
 
     def get_unbatched_data(self, noisy=False):
         dataset = self.get_noisy_test_data() if noisy else self.get_test_data()
@@ -231,64 +162,41 @@ class SignatureDataGenerator:
         return np.array(images), np.array(labels)
 
 
-    def generate_pairs(self, split='train'):
+    def generate_pairs(self):
         """
-        Generate positive and negative pairs for contrastive training or evaluation.
-        
-        Args:
-            split (str): 'train', 'test', or 'all' to select which writer set to use.
-        
+        Generate positive and negative pairs for contrastive loss training.
         Returns:
-            pairs (list of tuple): Each tuple contains two preprocessed images (img1, img2).
-            labels (list of int): Each label is 1 if the pair is from the same writer, else 0.
+            pairs: list of (img1, img2)
+            labels: list of 1 (genuine pair) or 0 (forged/different writer pair)
         """
         import random
 
-        # === Load data and writer info based on split
-        if split == 'train':
-            all_images, all_labels = self.get_train_data_with_labels()
-            writer_set = sorted(set(writer for _, writer in self.train_writers))
-            print(f"📚 training pairs using writers: {writer_set}")
-
-        elif split == 'test':
-            all_images, all_labels = self.get_test_data_with_labels()
-            writer_set = sorted(set(writer for _, writer in self.test_writers))
-            print(f"🧪 test pairs using writers: {writer_set}")
-
-        elif split == 'all':
-            all_images, all_labels = self.get_all_data_with_labels()
-            train_set = sorted(set(writer for _, writer in self.train_writers))
-            test_set = sorted(set(writer for _, writer in self.test_writers))
-            print(f"📚 All Writers Used — Train: {train_set} | Test: {test_set}")
-
-        else:
-            raise ValueError("Invalid split type. Use 'train', 'test', or 'all'.")
-
-        # === Group images by writer
+        all_images, all_labels = self.get_all_data_with_labels()
         label_to_images = {}
+
         for img, label in zip(all_images, all_labels):
-            label_to_images.setdefault(label, []).append(img)
+            if label not in label_to_images:
+                label_to_images[label] = []
+            label_to_images[label].append(img)
 
-        pairs, labels = [], []
+        pairs = []
+        labels = []
 
-        # === Create positive pairs (same writer)
-        for imgs in label_to_images.values():
-            if len(imgs) > 1:
-                for i in range(len(imgs) - 1):
-                    pairs.append((imgs[i], imgs[i + 1]))
+        # Create positive pairs (same label)
+        for label in label_to_images:
+            images = label_to_images[label]
+            if len(images) > 1:
+                for i in range(len(images) - 1):
+                    pairs.append((images[i], images[i + 1]))
                     labels.append(1)
 
-        # === Create negative pairs (different writers)
-        writer_labels = list(label_to_images.keys())
-        for _ in range(len(pairs)):  # One negative per positive
-            w1, w2 = random.sample(writer_labels, 2)
-            img1 = random.choice(label_to_images[w1])
-            img2 = random.choice(label_to_images[w2])
+        # Create negative pairs (different labels)
+        all_labels_set = list(label_to_images.keys())
+        for _ in range(len(pairs)):  # match the number of positive pairs
+            label1, label2 = random.sample(all_labels_set, 2)
+            img1 = random.choice(label_to_images[label1])
+            img2 = random.choice(label_to_images[label2])
             pairs.append((img1, img2))
             labels.append(0)
 
-        print(f"✅ Generated {len(pairs)} pairs ({labels.count(1)} positive, {labels.count(0)} negative)")
         return pairs, labels
-
-
-    
