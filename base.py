@@ -26,7 +26,8 @@ from sklearn.preprocessing import MinMaxScaler
 import umap.umap_ as umap
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
-from collections import defaultdict
+from collections import defaultdict, Counter
+from pair_log import save_softmax_predictions
 
 
 np.random.seed(1337)
@@ -94,19 +95,19 @@ def build_siamese_network(input_shape):
     model = Model(inputs=[input_a, input_b], outputs=output)
     return model
     
-def evaluate_classification_metrics(y_true, y_pred_probs, threshold=0.5):
+def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, output_dir="outputs/sop2", threshold=0.5):
     """
     Evaluate binary classification metrics from softmax probability outputs.
-    Handles edge cases where only one class may be present.
+    Saves metrics to a .txt file if dataset_name is provided.
     """
-    # Predicted labels: argmax over softmax output (e.g., [p0, p1])
+    # Predicted labels
     y_pred = np.argmax(y_pred_probs, axis=1)
 
-    # Accuracy and F1 score
+    # Basic metrics
     acc = accuracy_score(y_true, y_pred)
     f1 = f1_score(y_true, y_pred, zero_division=0)
 
-    # ROC AUC: only valid if both classes exist in y_true
+    # ROC AUC and EER
     if len(np.unique(y_true)) == 2:
         auc = roc_auc_score(y_true, y_pred_probs[:, 1])
         fpr, tpr, thresholds = roc_curve(y_true, y_pred_probs[:, 1])
@@ -115,12 +116,10 @@ def evaluate_classification_metrics(y_true, y_pred_probs, threshold=0.5):
         eer = fpr[eer_idx]
         eer_threshold = thresholds[eer_idx]
     else:
-        auc = None
-        eer = None
-        eer_threshold = None
+        auc = eer = eer_threshold = None
         print("⚠ ROC AUC and EER not computed (only one class in y_true)")
 
-    # Confusion matrix with forced labels
+    # Confusion matrix and derived metrics
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
     if cm.shape == (2, 2):
         tn, fp, fn, tp = cm.ravel()
@@ -130,7 +129,7 @@ def evaluate_classification_metrics(y_true, y_pred_probs, threshold=0.5):
         tn = fp = fn = tp = far = frr = 0.0
         print("⚠ Confusion matrix incomplete (only one class present)")
 
-    # Print metrics
+    # Print to console
     print("🔎 Evaluation Metrics:")
     print(f"✅ Accuracy:  {acc:.4f}")
     print(f"✅ F1 Score:  {f1:.4f}")
@@ -138,6 +137,24 @@ def evaluate_classification_metrics(y_true, y_pred_probs, threshold=0.5):
     print(f"✅ FAR:       {far:.4f}")
     print(f"✅ FRR:       {frr:.4f}")
     print(f"✅ EER:       {eer:.4f} at threshold {eer_threshold:.4f}" if eer is not None else "❌ EER:       Not available")
+
+    # Save to file if dataset name is provided
+    if dataset_name:
+        os.makedirs(output_dir, exist_ok=True)
+        filepath = os.path.join(output_dir, f"{dataset_name}_metrics.txt")
+        with open(filepath, "w") as f:
+            f.write(f"Evaluation Metrics for {dataset_name}\n")
+            f.write("="*40 + "\n")
+            f.write(f"Accuracy       : {acc:.4f}\n")
+            f.write(f"F1 Score       : {f1:.4f}\n")
+            f.write(f"ROC AUC        : {auc:.4f}\n" if auc is not None else "ROC AUC        : Not available\n")
+            f.write(f"FAR (FP Rate)  : {far:.4f}\n")
+            f.write(f"FRR (FN Rate)  : {frr:.4f}\n")
+            if eer is not None:
+                f.write(f"EER            : {eer:.4f} at threshold {eer_threshold:.4f}\n")
+            else:
+                f.write(f"EER            : Not available\n")
+        print(f"📝 Metrics saved to {filepath}")
 
     return {
         "accuracy": acc,
@@ -154,7 +171,11 @@ def minmax_normalize(img):
     scaled = MinMaxScaler().fit_transform(flat)
     return scaled.reshape(img.shape)
 
-def plot_image_comparison(original, normalized, filename):
+def plot_image_comparison(original, normalized, filename, dataset_name):
+    output_dir = os.path.join("sop1_outputs", dataset_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Create side-by-side comparison plot
     fig, axes = plt.subplots(1, 2, figsize=(8, 4))
     axes[0].imshow(original, cmap='gray')
     axes[0].set_title("Original")
@@ -165,19 +186,21 @@ def plot_image_comparison(original, normalized, filename):
     axes[1].axis("off")
 
     plt.tight_layout()
-    plt.savefig(os.path.join("sop1_outputs", f"{filename}_comparison.png"))
+    
+    # Save image to the correct dataset-specific path
+    plt.savefig(os.path.join(output_dir, f"{filename}_comparison.png"))
     plt.close()
 
-def plot_histograms(original, normalized, filename):
-    plt.figure(figsize=(6, 4))
-    plt.hist(original.ravel(), bins=50, alpha=0.5, label='Original')
-    plt.hist(normalized.ravel(), bins=50, alpha=0.5, label='Normalized')
-    plt.legend()
-    plt.title("Histogram Comparison")
-    plt.xlabel("Pixel Intensity")
-    plt.ylabel("Frequency")
-    plt.savefig(os.path.join("sop1_outputs", f"{filename}_histogram.png"))
-    plt.close()
+# def plot_histograms(original, normalized, filename):
+#     plt.figure(figsize=(6, 4))
+#     plt.hist(original.ravel(), bins=50, alpha=0.5, label='Original')
+#     plt.hist(normalized.ravel(), bins=50, alpha=0.5, label='Normalized')
+#     plt.legend()
+#     plt.title("Histogram Comparison")
+#     plt.xlabel("Pixel Intensity")
+#     plt.ylabel("Frequency")
+#     plt.savefig(os.path.join("sop1_outputs", f"{filename}_histogram.png"))
+#     plt.close()
 
 def compute_edge_count(image):
     edges = cv2.Canny((image * 255).astype(np.uint8), 50, 150)
@@ -211,8 +234,7 @@ def generate_sop1_outputs(generator,
                 normalized = minmax_normalize(resized)
 
                 filename = f"writer{writer}_{label_type}_{os.path.splitext(fname)[0]}"
-                plot_image_comparison(resized, normalized, filename)
-                plot_histograms(resized, normalized, filename)
+                plot_image_comparison(resized, normalized, filename, dataset_name)
 
                 # Edge Count Calculation
                 edge_orig = compute_edge_count(resized)
@@ -222,8 +244,6 @@ def generate_sop1_outputs(generator,
                 rows.append([f"writer_{writer}", fname, edge_orig, edge_norm])
                 edge_stats[f"writer_{writer}"]["original"].append(edge_orig)
                 edge_stats[f"writer_{writer}"]["normalized"].append(edge_norm)
-
-                print(f"[{filename}] Edges — Original: {edge_orig}, Normalized: {edge_norm}")
 
     # Save raw image-level edge counts
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -306,9 +326,11 @@ def generate_sop3_curves(history, dataset_name, base_output_dir="outputs/sop3"):
     output_dir = os.path.join(base_output_dir, dataset_name)
     os.makedirs(output_dir, exist_ok=True)
 
-    # Accuracy Curve
-    acc = history.history.get('sparse_categorical_accuracy') or history.history.get('accuracy')
-    val_acc = history.history.get('val_sparse_categorical_accuracy') or history.history.get('val_accuracy')
+    print("📋 History keys:", history.history.keys())
+
+    # Directly access correct keys now
+    acc = history.history['sparse_categorical_accuracy']
+    val_acc = history.history['val_sparse_categorical_accuracy']
 
     plt.figure()
     plt.plot(acc, label='Train Accuracy')
@@ -318,10 +340,11 @@ def generate_sop3_curves(history, dataset_name, base_output_dir="outputs/sop3"):
     plt.ylabel('Accuracy')
     plt.legend()
     plt.grid(True)
+    plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "accuracy_curve.png"))
     plt.close()
 
-    # Loss Curve
+    # Loss plot
     loss = history.history['loss']
     val_loss = history.history['val_loss']
 
@@ -333,16 +356,17 @@ def generate_sop3_curves(history, dataset_name, base_output_dir="outputs/sop3"):
     plt.ylabel('Loss')
     plt.legend()
     plt.grid(True)
+    plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "loss_curve.png"))
     plt.close()
 
-    print(f"📈 Validation Accuracy curves saved to {output_dir}")
+    print(f"📈 Accuracy and Training Curves saved to {output_dir}")
 
 
 # Parameters
 BATCH_SIZE = 128
 EPOCHS = 5
-IMG_SHAPE = (155, 220, 1)  # Grayscale
+IMG_SHAPE = (155, 220, 1)  
 weights_dir = 'base_weights_softmax'
 metrics_dir = 'baseline_metrics_softmax'
 os.makedirs(weights_dir, exist_ok=True)
@@ -369,7 +393,7 @@ datasets = {
 results = []
 
 for dataset_name, config in datasets.items():
-    print(f"\n📦 Processing Softmax-Based Siamese Model for Dataset: {dataset_name}")
+    print(f"\n📦 Processing Siamese Model for Dataset: {dataset_name}")
 
     # Load and generate pairs
     generator = SignatureDataGenerator(
@@ -379,6 +403,13 @@ for dataset_name, config in datasets.items():
         batch_sz=BATCH_SIZE,
     )
     pairs, labels = generator.generate_pairs()
+    labels = np.array(labels).astype(np.int32)
+
+     # Shuffle before splitting to avoid label imbalance
+    combined = list(zip(pairs, labels))
+    np.random.shuffle(combined)
+    pairs, labels = zip(*combined)
+    pairs = list(pairs)
     labels = np.array(labels).astype(np.int32)
 
     # Split data
@@ -392,12 +423,20 @@ for dataset_name, config in datasets.items():
     val_img1 = np.array([pair[0] for pair in val_pairs])
     val_img2 = np.array([pair[1] for pair in val_pairs])
 
+    # Step 5: Sanity checks
+    print("Sample val labels:", val_labels[:10])
+    print("Unique val labels:", np.unique(val_labels))
+    print("Train label distribution:", Counter(train_labels))
+    print("Val label distribution:", Counter(val_labels))
+    print("Label dtype:", train_labels.dtype, val_labels.dtype)
+    print("Label shape:", train_labels.shape, val_labels.shape)
+
     # Build model using softmax-based classification
     model = build_siamese_network(IMG_SHAPE)
     model.compile(
         optimizer=Adam(learning_rate=0.0001),
-        loss=SparseCategoricalCrossentropy(name="Loss"),
-        metrics=[SparseCategoricalAccuracy(name="Accuracy")]
+        loss=SparseCategoricalCrossentropy(),
+        metrics=[SparseCategoricalAccuracy()]
     )
 
     # ========== Training ==========
@@ -409,7 +448,45 @@ for dataset_name, config in datasets.items():
         epochs=EPOCHS,
         verbose=2
     )
+
+    save_softmax_predictions(generator, model, dataset_name=dataset_name, split="train")
+
+    # ========== Save the model ==========
+    model_save_path = f"models/{dataset_name}_siamese_model.h5"
+    os.makedirs("models", exist_ok=True)
+    model.save(model_save_path)
+    print(f"model saved to: {model_save_path}")
+
+    # # ========== Debug: Print outputs from a sample pair ==========
+    # # Build a debug model to extract all steps
+    # base_network = model.get_layer("base_network")
+    # input_a = model.input[0]
+    # input_b = model.input[1]
+
+    # encoded_a = base_network(input_a)
+    # encoded_b = base_network(input_b)
+    # combined_vec = tf.keras.layers.Concatenate(name="concat_embeddings")([encoded_a, encoded_b])
+    # dense32 = tf.keras.layers.Dense(32, activation='relu', name="dense_similarity")(combined_vec)
+    # softmax_out = tf.keras.layers.Dense(2, activation='softmax', name="final_softmax")(dense32)
+
+    # debug_model = Model(inputs=[input_a, input_b], outputs=[encoded_a, encoded_b, combined_vec, dense32, softmax_out])
+
+    # # Use a random validation sample to inspect
+    # sample_idx = 0
+    # img_a = np.expand_dims(val_img1[sample_idx], axis=0)
+    # img_b = np.expand_dims(val_img2[sample_idx], axis=0)
+
+    # embedding_a, embedding_b, combined_out, dense_out, softmax_pred = debug_model.predict([img_a, img_b])
+
+    # print(f"\n🔍 Debug Outputs for Dataset: {dataset_name}")
+    # print("🔹 Embedding A:", embedding_a[0])
+    # print("🔹 Embedding B:", embedding_b[0])
+    # print("🔹 Combined Vector:", combined_out[0])
+    # print("🔹 32-D ReLU Dense:", dense_out[0])
+    # print("🔹 Softmax Output:", softmax_pred[0], "→ Predicted Class:", np.argmax(softmax_pred[0]))
+
     train_time = time.time() - start_time
+    print(f"⏱ Training completed in {train_time:.2f} seconds")
     # ========== SOP 1 ==========
     print(f"\n📊 Running SOP 1 Evaluation for {dataset_name}")
     generate_sop1_outputs(
@@ -430,13 +507,12 @@ for dataset_name, config in datasets.items():
     test_img2 = np.array([pair[1] for pair in test_pairs])
     test_labels = np.array(test_labels)
 
-    print("SOP 2 Label Distribution:", dict(zip(*np.unique(test_labels, return_counts=True))))
+    print("Label Distribution:", dict(zip(*np.unique(test_labels, return_counts=True))))
     if len(np.unique(test_labels)) < 2:
-        print("⚠ Skipping SOP 2 evaluation — only one class present.")
+        print("⚠ Skipping evaluation — only one class present.")
     else:
         y_pred_probs = model.predict([test_img1, test_img2], batch_size=128)
-        metrics = evaluate_classification_metrics(test_labels, y_pred_probs)
+        metrics = evaluate_classification_metrics(test_labels, y_pred_probs, dataset_name=dataset_name)
         compute_distance_distributions(model, generator, dataset_name)
         results.append((dataset_name, metrics))
-        print(f"✅ SOP 2 Evaluation Complete for {dataset_name}")
-        print(metrics)
+        print(f"✅ Evaluation Complete for {dataset_name}")
