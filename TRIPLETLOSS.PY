@@ -68,93 +68,186 @@ def create_base_network(input_shape):
     return model
 
 def build_siamese_network(input_shape):
-    """
-    Siamese network using no explicit distance metric.
-    Combines embeddings through dense layers and uses softmax for classification.
-    Aligned with the 2024 study by Nasr et al.
-    """
     base_network = create_base_network(input_shape)
 
-    # Two inputs: image A and image B
-    input_a = Input(shape=input_shape)
-    input_b = Input(shape=input_shape)
+    # Triplet inputs
+    anchor_input = Input(shape=input_shape, name='anchor_input')
+    positive_input = Input(shape=input_shape, name='positive_input')
+    negative_input = Input(shape=input_shape, name='negative_input')
 
-    # Step 2a + 2b: Pass both inputs through the same CNN base
-    encoded_a = base_network(input_a)
-    encoded_b = base_network(input_b)
+    encoded_anchor = base_network(anchor_input)
+    encoded_positive = base_network(positive_input)
+    encoded_negative = base_network(negative_input)
 
-    # Step 2c: Combine outputs (e.g., concatenation)
-    combined = layers.Concatenate()([encoded_a, encoded_b])
+    # L2 Normalization
+    encoded_anchor = tf.keras.layers.Lambda(lambda x: tf.math.l2_normalize(x, axis=1))(encoded_anchor)
+    encoded_positive = tf.keras.layers.Lambda(lambda x: tf.math.l2_normalize(x, axis=1))(encoded_positive)
+    encoded_negative = tf.keras.layers.Lambda(lambda x: tf.math.l2_normalize(x, axis=1))(encoded_negative)
 
-    # Dense layer to learn similarity from combined embeddings
-    x = layers.Dense(32, activation='relu')(combined)
+    # Stack into a single tensor with shape (batch, 3, embedding_dim)
+    merged_output = tf.keras.layers.Lambda(lambda x: tf.stack(x, axis=1))(
+        [encoded_anchor, encoded_positive, encoded_negative]
+    )
 
-    # Step 2d: Final classification layer (genuine vs forged)
-    output = layers.Dense(2, activation='softmax')(x)
 
-    # Full Siamese model
-    model = Model(inputs=[input_a, input_b], outputs=output)
+    model = Model(inputs=[anchor_input, positive_input, negative_input], outputs=merged_output)
+
     return model
-    
-def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, output_dir="outputs/sop2", threshold=0.5):
-    """
-    Evaluate binary classification metrics from softmax probability outputs.
-    Saves metrics to a .txt file if dataset_name is provided.
-    """
-    # Predicted labels
-    y_pred = np.argmax(y_pred_probs, axis=1)
 
-    # Basic metrics
+def triplet_loss(margin=0.7):
+    def loss(y_true, y_pred):  # y_pred has shape (batch_size, 3, embedding_dim)
+        anchor = y_pred[:, 0]
+        positive = y_pred[:, 1]
+        negative = y_pred[:, 2]
+
+        pos_dist = tf.reduce_sum(tf.square(anchor - positive), axis=1)
+        neg_dist = tf.reduce_sum(tf.square(anchor - negative), axis=1)
+        return tf.reduce_mean(tf.maximum(pos_dist - neg_dist + margin, 0.0))
+    return loss
+
+def evaluate_classification_metrics(y_true, distances, dataset_name=None, output_dir="outputs/sop2", threshold=None):
+    """
+    Evaluate binary classification metrics for a distance-based model (triplet loss).
+    `distances` should be a 1D array of Euclidean distances between embeddings.
+    `threshold` is the cutoff: distances < threshold → same class (genuine), else forged.
+    If threshold is None, EER threshold will be used automatically.
+    """
+
+    y_true = np.array(y_true)
+    distances = np.array(distances)
+
+    # Normalize to similarity score if needed (optional)
+    # similarities = 1 - distances / np.max(distances)
+
+    # ROC curve
+    fpr, tpr, thresholds = roc_curve(y_true, -distances)  # invert because lower distance = genuine
+    auc = roc_auc_score(y_true, -distances)
+
+    # EER
+    fnr = 1 - tpr
+    eer_idx = np.nanargmin(np.abs(fpr - fnr))
+    eer = fpr[eer_idx]
+    eer_threshold = thresholds[eer_idx]
+
+    # Use EER threshold if not explicitly provided
+    if threshold is None:
+        threshold = eer_threshold
+
+    # Classify using distance threshold
+    y_pred = (distances < threshold).astype(int)  # 1 = genuine, 0 = forged
+
     acc = accuracy_score(y_true, y_pred)
     f1 = f1_score(y_true, y_pred, zero_division=0)
-
-    # ROC AUC and EER
-    if len(np.unique(y_true)) == 2:
-        auc = roc_auc_score(y_true, y_pred_probs[:, 1])
-        fpr, tpr, thresholds = roc_curve(y_true, y_pred_probs[:, 1])
-        fnr = 1 - tpr
-        eer_idx = np.nanargmin(np.abs(fnr - fpr))
-        eer = fpr[eer_idx]
-        eer_threshold = thresholds[eer_idx]
-    else:
-        auc = eer = eer_threshold = None
-        print("⚠ ROC AUC and EER not computed (only one class in y_true)")
-
-    # Confusion matrix and derived metrics
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
+
     if cm.shape == (2, 2):
         tn, fp, fn, tp = cm.ravel()
         far = fp / (fp + tn + 1e-6)
         frr = fn / (fn + tp + 1e-6)
     else:
-        tn = fp = fn = tp = far = frr = 0.0
+        far = frr = 0.0
         print("⚠ Confusion matrix incomplete (only one class present)")
 
     # Print to console
-    print("🔎 Evaluation Metrics:")
+    print("🔎 Evaluation Metrics (Triplet Distance-Based):")
     print(f"✅ Accuracy:  {acc:.4f}")
     print(f"✅ F1 Score:  {f1:.4f}")
-    print(f"✅ ROC AUC:   {auc:.4f}" if auc is not None else "❌ ROC AUC:   Not available")
+    print(f"✅ ROC AUC:   {auc:.4f}")
     print(f"✅ FAR:       {far:.4f}")
     print(f"✅ FRR:       {frr:.4f}")
-    print(f"✅ EER:       {eer:.4f} at threshold {eer_threshold:.4f}" if eer is not None else "❌ EER:       Not available")
+    print(f"✅ EER:       {eer:.4f} at threshold {eer_threshold:.4f}")
 
-    # Save to file if dataset name is provided
+    # Save to file
     if dataset_name:
         os.makedirs(output_dir, exist_ok=True)
         filepath = os.path.join(output_dir, f"{dataset_name}_metrics.txt")
         with open(filepath, "w") as f:
-            f.write(f"Evaluation Metrics for {dataset_name}\n")
+            f.write(f"Evaluation Metrics for {dataset_name} (Triplet)\n")
             f.write("="*40 + "\n")
             f.write(f"Accuracy       : {acc:.4f}\n")
             f.write(f"F1 Score       : {f1:.4f}\n")
-            f.write(f"ROC AUC        : {auc:.4f}\n" if auc is not None else "ROC AUC        : Not available\n")
+            f.write(f"ROC AUC        : {auc:.4f}\n")
             f.write(f"FAR (FP Rate)  : {far:.4f}\n")
             f.write(f"FRR (FN Rate)  : {frr:.4f}\n")
-            if eer is not None:
-                f.write(f"EER            : {eer:.4f} at threshold {eer_threshold:.4f}\n")
-            else:
-                f.write(f"EER            : Not available\n")
+            f.write(f"EER            : {eer:.4f} at threshold {eer_threshold:.4f}\n")
+        print(f"📝 Metrics saved to {filepath}")
+
+    return {
+        "accuracy": acc,
+        "f1_score": f1,
+        "roc_auc": auc,
+        "far": far,
+        "frr": frr,
+        "eer": eer,
+        "eer_threshold": eer_threshold,
+        "threshold_used": threshold,
+    }
+
+def evaluate_triplet_sop2(model_path, test_img1, test_img2, test_labels, dataset_name=None, output_dir="outputs/sop2"):
+    """
+    Evaluates verification metrics for a triplet-based model using distance-based comparison.
+    """
+
+    # Load the trained triplet model
+    triplet_model = load_model(model_path, compile=False)
+
+    # Extract the base embedding model
+    embedding_model = triplet_model.get_layer("base_network")
+
+    # Generate embeddings
+    emb1 = embedding_model.predict(test_img1, batch_size=128)
+    emb2 = embedding_model.predict(test_img2, batch_size=128)
+
+    # Compute L2 distances
+    distances = np.linalg.norm(emb1 - emb2, axis=1)
+
+    # Normalize distances to similarity scores (optional)
+    y_pred_probs = 1 - distances / np.max(distances)
+
+    # Threshold for classification
+    y_pred = (y_pred_probs >= 0.5).astype(int)
+
+    # Evaluation metrics
+    acc = accuracy_score(test_labels, y_pred)
+    f1 = f1_score(test_labels, y_pred)
+    auc = roc_auc_score(test_labels, y_pred_probs)
+    fpr, tpr, thresholds = roc_curve(test_labels, y_pred_probs)
+    fnr = 1 - tpr
+    eer_idx = np.nanargmin(np.abs(fnr - fpr))
+    eer = fpr[eer_idx]
+    eer_threshold = thresholds[eer_idx]
+    cm = confusion_matrix(test_labels, y_pred)
+
+    # FAR / FRR
+    if cm.shape == (2, 2):
+        tn, fp, fn, tp = cm.ravel()
+        far = fp / (fp + tn + 1e-6)
+        frr = fn / (fn + tp + 1e-6)
+    else:
+        far = frr = 0.0
+
+    # Print results
+    print("🔎 Triplet-Based SOP2 Evaluation:")
+    print(f"✅ Accuracy:  {acc:.4f}")
+    print(f"✅ F1 Score:  {f1:.4f}")
+    print(f"✅ ROC AUC:   {auc:.4f}")
+    print(f"✅ FAR:       {far:.4f}")
+    print(f"✅ FRR:       {frr:.4f}")
+    print(f"✅ EER:       {eer:.4f} at threshold {eer_threshold:.4f}")
+
+    # Save to file
+    if dataset_name:
+        os.makedirs(output_dir, exist_ok=True)
+        filepath = os.path.join(output_dir, f"{dataset_name}_metrics.txt")
+        with open(filepath, "w") as f:
+            f.write(f"Triplet-Based Evaluation Metrics for {dataset_name}\n")
+            f.write("=" * 40 + "\n")
+            f.write(f"Accuracy       : {acc:.4f}\n")
+            f.write(f"F1 Score       : {f1:.4f}\n")
+            f.write(f"ROC AUC        : {auc:.4f}\n")
+            f.write(f"FAR (FP Rate)  : {far:.4f}\n")
+            f.write(f"FRR (FN Rate)  : {frr:.4f}\n")
+            f.write(f"EER            : {eer:.4f} at threshold {eer_threshold:.4f}\n")
         print(f"📝 Metrics saved to {filepath}")
 
     return {
@@ -326,29 +419,13 @@ def generate_sop3_curves(history, dataset_name, base_output_dir="outputs/sop3"):
 
     print("📋 History keys:", history.history.keys())
 
-    # Directly access correct keys now
-    acc = history.history['sparse_categorical_accuracy']
-    val_acc = history.history['val_sparse_categorical_accuracy']
-
-    plt.figure()
-    plt.plot(acc, label='Train Accuracy')
-    plt.plot(val_acc, label='Validation Accuracy')
-    plt.title(f"{dataset_name} - Training vs Validation Accuracy")
-    plt.xlabel('Epochs')
-    plt.ylabel('Accuracy')
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "accuracy_curve.png"))
-    plt.close()
-
-    # Loss plot
-    loss = history.history['loss']
-    val_loss = history.history['val_loss']
+    loss = history.history.get('loss', [])
+    val_loss = history.history.get('val_loss', [])
 
     plt.figure()
     plt.plot(loss, label='Train Loss')
-    plt.plot(val_loss, label='Validation Loss')
+    if val_loss:
+        plt.plot(val_loss, label='Validation Loss')
     plt.title(f"{dataset_name} - Training vs Validation Loss")
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
@@ -358,7 +435,8 @@ def generate_sop3_curves(history, dataset_name, base_output_dir="outputs/sop3"):
     plt.savefig(os.path.join(output_dir, "loss_curve.png"))
     plt.close()
 
-    print(f"📈 Accuracy and Training Curves saved to {output_dir}")
+    print(f"📈 Training Loss Curve saved to {output_dir}")
+
 
 
 # Parameters
@@ -390,86 +468,54 @@ datasets = {
 
 results = []
 
-for dataset_name, config in datasets.items():
-    print(f"\n📦 Processing Siamese Model for Dataset: {dataset_name}")
+from collections import Counter
 
-    # Load and generate pairs
+for dataset_name, config in datasets.items():
+    print(f"\n📦 Processing Triplet-Based Model for Dataset: {dataset_name}")
+
+    # Load data generator
     generator = SignatureDataGenerator(
         dataset={dataset_name: config},
         img_height=IMG_SHAPE[0],
         img_width=IMG_SHAPE[1],
         batch_sz=BATCH_SIZE,
     )
-    pairs, labels = generator.generate_pairs()
-    labels = np.array(labels).astype(np.int32)
 
-     # Shuffle before splitting to avoid label imbalance
-    combined = list(zip(pairs, labels))
-    np.random.shuffle(combined)
-    pairs, labels = zip(*combined)
-    pairs = list(pairs)
-    labels = np.array(labels).astype(np.int32)
+    # Load triplet data
+    train_dataset = generator.get_triplet_train()
 
-    # Split data
-    val_split = int(0.9 * len(pairs))
-    train_pairs, val_pairs = pairs[:val_split], pairs[val_split:]
-    train_labels, val_labels = labels[:val_split], labels[val_split:]
-
-    # Separate image pairs
-    train_img1 = np.array([pair[0] for pair in train_pairs])
-    train_img2 = np.array([pair[1] for pair in train_pairs])
-    val_img1 = np.array([pair[0] for pair in val_pairs])
-    val_img2 = np.array([pair[1] for pair in val_pairs])
-
-    # Step 5: Sanity checks
-    print("Sample val labels:", val_labels[:10])
-    print("Unique val labels:", np.unique(val_labels))
-    print("Train label distribution:", Counter(train_labels))
-    print("Val label distribution:", Counter(val_labels))
-    print("Label dtype:", train_labels.dtype, val_labels.dtype)
-    print("Label shape:", train_labels.shape, val_labels.shape)
-
-    # Build model using softmax-based classification
+    # Build model (triplet loss version)
     model = build_siamese_network(IMG_SHAPE)
-    model.compile(
-        optimizer=Adam(learning_rate=0.0001),
-        loss=SparseCategoricalCrossentropy(),
-        metrics=[SparseCategoricalAccuracy()]
-    )
+    model.compile(optimizer=Adam(learning_rate=0.0001), loss=triplet_loss(margin=0.7))
 
     # ========== Training ==========
-    start_time = time.time()
+    print("🧠 Starting training with triplet loss ...")
     history = model.fit(
-        [train_img1, train_img2], train_labels,
-        validation_data=([val_img1, val_img2], val_labels),
-        batch_size=BATCH_SIZE,
+        train_dataset,
+        steps_per_epoch=len(generator.train_writers),  # or len(generator.train_writers) * samples_per_writer // BATCH_SIZE
         epochs=EPOCHS,
         verbose=2
     )
 
-    save_softmax_predictions(generator, model, dataset_name=dataset_name, split="train")
-    save_softmax_predictions(generator, model, dataset_name=dataset_name, split="test")
-
-
-    # ========== Save the model ==========
-    model_save_path = f"models/{dataset_name}_siamese_model.h5"
+   # ========== Save the model ==========
+    # Save only the weights (recommended for models with Lambda layers)
+    weights_path = f"models/{dataset_name}_triplet_weights.h5"
     os.makedirs("models", exist_ok=True)
-    model.save(model_save_path)
-    print(f"model saved to: {model_save_path}")
+    model.save_weights(weights_path)
+    print(f"✅ Weights saved to: {weights_path}")
 
-    train_time = time.time() - start_time
-    print(f"⏱ Training completed in {train_time:.2f} seconds")
-    # ========== SOP 1 ==========
-    print(f"\n📊 Running SOP 1 Evaluation for {dataset_name}")
-    generate_sop1_outputs(
-        generator,
-        save_path=f"outputs/sop1/{dataset_name}_edge_count_summary.csv",
-        avg_path=f"outputs/sop1/{dataset_name}_edge_count_averages.csv"
-    )
 
-    # ========== SOP 3 ==========
-    print(f"\n📈 Generating SOP 3 Curves for {dataset_name}")
-    generate_sop3_curves(history, dataset_name)
+    # # ========== SOP 1 ==========
+    # print(f"\n📊 Running SOP 1 Evaluation for {dataset_name}")
+    # generate_sop1_outputs(
+    #     generator,
+    #     save_path=f"outputs/sop1/{dataset_name}_edge_count_summary.csv",
+    #     avg_path=f"outputs/sop1/{dataset_name}_edge_count_averages.csv"
+    # )
+
+    # # ========== SOP 3 ==========
+    # print(f"\n📈 Generating SOP 3 Curves for {dataset_name}")
+    # generate_sop3_curves(history, dataset_name)
 
     # ========== SOP 2 Evaluation (Writer-Independent) ==========
     print(f"\n🔍 Running SOP 2 Evaluation for {dataset_name}")
@@ -483,8 +529,26 @@ for dataset_name, config in datasets.items():
     if len(np.unique(test_labels)) < 2:
         print("⚠ Skipping evaluation — only one class present.")
     else:
-        y_pred_probs = model.predict([test_img1, test_img2], batch_size=128)
+        # Rebuild the embedding model (same architecture as base network)
+        embedding_model = create_base_network(IMG_SHAPE)
+
+        # Load the trained weights from Triplet model
+        weights_path = f"models/{dataset_name}_triplet_weights.h5"
+        embedding_model.load_weights(weights_path, by_name=True, skip_mismatch=True)
+        print(f"✅ Loaded embedding weights from {weights_path}")
+
+        # Generate embeddings
+        emb1 = embedding_model.predict(test_img1, batch_size=128)
+        emb2 = embedding_model.predict(test_img2, batch_size=128)
+
+        # Compute distances
+        distances = np.linalg.norm(emb1 - emb2, axis=1)
+
+        # Optionally normalize and convert to similarity scores (for metrics that expect probability-like values)
+        y_pred_probs = 1 - distances / np.max(distances)
+
+        # Evaluate metrics using distance-based predictions
         metrics = evaluate_classification_metrics(test_labels, y_pred_probs, dataset_name=dataset_name)
-        compute_distance_distributions(model, generator, dataset_name)
+        compute_distance_distributions(embedding_model, generator, dataset_name)
         results.append((dataset_name, metrics))
         print(f"✅ Evaluation Complete for {dataset_name}")

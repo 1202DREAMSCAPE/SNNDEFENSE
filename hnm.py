@@ -199,7 +199,7 @@ def compute_edge_count(image):
 def generate_sop1_outputs(generator, 
                           save_path="outputs/edge_count_summary.csv", 
                           avg_path="outputs/edge_count_averages.csv"):
-    max_visualizations = 5
+    max_visualizations = 5  # Number of images to visualize per writer
     rows = [["Writer", "Image", "Original_EdgeCount", "MinMax_EdgeCount", "PSNR"]]
     edge_stats = defaultdict(lambda: {"original": [], "normalized": [], "psnr": []})
 
@@ -400,7 +400,7 @@ for dataset_name, config in datasets.items():
         img_width=IMG_SHAPE[1],
         batch_sz=BATCH_SIZE,
     )
-    pairs, labels = generator.generate_pairs()
+    pairs, labels = generator.generate_pairs(mining=True)
     labels = np.array(labels).astype(np.int32)
 
      # Shuffle before splitting to avoid label imbalance
@@ -447,10 +447,6 @@ for dataset_name, config in datasets.items():
         verbose=2
     )
 
-    save_softmax_predictions(generator, model, dataset_name=dataset_name, split="train")
-    save_softmax_predictions(generator, model, dataset_name=dataset_name, split="test")
-
-
     # ========== Save the model ==========
     model_save_path = f"models/{dataset_name}_siamese_model.h5"
     os.makedirs("models", exist_ok=True)
@@ -459,32 +455,7 @@ for dataset_name, config in datasets.items():
 
     train_time = time.time() - start_time
     print(f"⏱ Training completed in {train_time:.2f} seconds")
-    # ========== SOP 1 ==========
-    print(f"\n📊 Running SOP 1 Evaluation for {dataset_name}")
-    generate_sop1_outputs(
-        generator,
-        save_path=f"outputs/sop1/{dataset_name}_edge_count_summary.csv",
-        avg_path=f"outputs/sop1/{dataset_name}_edge_count_averages.csv"
-    )
 
     # ========== SOP 3 ==========
     print(f"\n📈 Generating SOP 3 Curves for {dataset_name}")
     generate_sop3_curves(history, dataset_name)
-
-    # ========== SOP 2 Evaluation (Writer-Independent) ==========
-    print(f"\n🔍 Running SOP 2 Evaluation for {dataset_name}")
-
-    test_pairs, test_labels = generator.generate_pairs(split='test', use_raw=True)
-    test_img1 = np.array([pair[0] for pair in test_pairs])
-    test_img2 = np.array([pair[1] for pair in test_pairs])
-    test_labels = np.array(test_labels)
-
-    print("Label Distribution:", dict(zip(*np.unique(test_labels, return_counts=True))))
-    if len(np.unique(test_labels)) < 2:
-        print("⚠ Skipping evaluation — only one class present.")
-    else:
-        y_pred_probs = model.predict([test_img1, test_img2], batch_size=128)
-        metrics = evaluate_classification_metrics(test_labels, y_pred_probs, dataset_name=dataset_name)
-        compute_distance_distributions(model, generator, dataset_name)
-        results.append((dataset_name, metrics))
-        print(f"✅ Evaluation Complete for {dataset_name}")

@@ -93,8 +93,6 @@ def triplet_loss(margin=0.7):
         neg_dist = tf.reduce_sum(tf.square(anchor - negative), axis=1)
         return tf.reduce_mean(tf.maximum(pos_dist - neg_dist + margin, 0.0))
     return loss
-
-
     
 def evaluate_classification_metrics(y_true, y_pred_probs, threshold=0.5):
     """

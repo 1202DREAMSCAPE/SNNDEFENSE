@@ -30,7 +30,6 @@ from collections import defaultdict, Counter
 from pair_log import save_softmax_predictions
 from skimage.metrics import peak_signal_noise_ratio as compare_psnr
 
-
 np.random.seed(1337)
 random.seed(1337)
 tf.random.set_seed(1337)
@@ -142,7 +141,7 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
     # Save to file if dataset name is provided
     if dataset_name:
         os.makedirs(output_dir, exist_ok=True)
-        filepath = os.path.join(output_dir, f"{dataset_name}_metrics.txt")
+        filepath = os.path.join(output_dir, f"{dataset_name}_metrics_clahe.txt")
         with open(filepath, "w") as f:
             f.write(f"Evaluation Metrics for {dataset_name}\n")
             f.write("="*40 + "\n")
@@ -183,13 +182,13 @@ def plot_image_comparison(original, normalized, filename, dataset_name):
     axes[0].axis("off")
 
     axes[1].imshow(normalized, cmap='gray')
-    axes[1].set_title("MinMax Normalized")
+    axes[1].set_title("CLAHE")
     axes[1].axis("off")
 
     plt.tight_layout()
     
     # Save image to the correct dataset-specific path
-    plt.savefig(os.path.join(output_dir, f"{filename}_comparison.png"))
+    plt.savefig(os.path.join(output_dir, f"{filename}_comparison_clahe.png"))
     plt.close()
 
 def compute_edge_count(image):
@@ -197,11 +196,16 @@ def compute_edge_count(image):
     return np.sum(edges > 0)
 
 def generate_sop1_outputs(generator, 
-                          save_path="outputs/edge_count_summary.csv", 
-                          avg_path="outputs/edge_count_averages.csv"):
-    max_visualizations = 5
-    rows = [["Writer", "Image", "Original_EdgeCount", "MinMax_EdgeCount", "PSNR"]]
-    edge_stats = defaultdict(lambda: {"original": [], "normalized": [], "psnr": []})
+                          save_path="outputs/edge_count_summary_clahe.csv", 
+                          avg_path="outputs/edge_count_averages_clahe.csv",
+                          max_visualizations=2):
+
+    def apply_clahe(img):
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        return clahe.apply(img)
+
+    rows = [["Writer", "Image", "Original_EdgeCount", "CLAHE_EdgeCount", "PSNR"]]
+    edge_stats = defaultdict(lambda: {"original": [], "clahe": [], "psnr": []})
 
     for dataset_path, writer in generator.test_writers:
         for label_type in ["genuine", "forged"]:
@@ -213,7 +217,7 @@ def generate_sop1_outputs(generator,
             if len(img_files) < 1:
                 continue
 
-            # Choose a few to visualize
+            # Visualize only a few
             visualize_set = set(random.sample(img_files, min(max_visualizations, len(img_files))))
 
             for fname in img_files:
@@ -223,44 +227,42 @@ def generate_sop1_outputs(generator,
                     continue
 
                 resized = cv2.resize(original, (220, 155))
-                normalized = minmax_normalize(resized)
+                clahe_img = apply_clahe(resized)
 
-                # Visualize only selected samples
+                # Only visualize some images
                 if fname in visualize_set:
                     filename = f"writer{writer}_{label_type}_{os.path.splitext(fname)[0]}"
-                    plot_image_comparison(resized, normalized, filename + "_minmax", dataset_name)
+                    plot_image_comparison(resized, clahe_img, filename + "_clahe", dataset_name)
 
-                # Edge Count Calculation
+                # Compute metrics
                 edge_orig = compute_edge_count(resized)
-                edge_norm = compute_edge_count(normalized)
+                edge_clahe = compute_edge_count(clahe_img)
+                psnr_value = compare_psnr(resized.astype(np.float32), clahe_img.astype(np.float32), data_range=255)
 
-                # PSNR Calculation
-                psnr_value = compare_psnr(resized.astype(np.float32), (normalized * 255).astype(np.float32), data_range=255)
-
-                rows.append([f"writer_{writer}", fname, edge_orig, edge_norm, round(psnr_value, 2)])
+                rows.append([f"writer_{writer}", fname, edge_orig, edge_clahe, round(psnr_value, 2)])
                 edge_stats[f"writer_{writer}"]["original"].append(edge_orig)
-                edge_stats[f"writer_{writer}"]["normalized"].append(edge_norm)
+                edge_stats[f"writer_{writer}"]["clahe"].append(edge_clahe)
                 edge_stats[f"writer_{writer}"]["psnr"].append(psnr_value)
 
-    # Save full image-level summary
+    # Save full image-level CSV
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     with open(save_path, "w", newline="") as f:
         csv_writer = csv.writer(f)
         csv_writer.writerows(rows)
-    print(f"\n✅ MinMax edge count + PSNR summary saved to {save_path}")
+    print(f"\n✅ CLAHE edge count + PSNR summary saved to {save_path}")
 
-    # Save per-writer averages
-    avg_rows = [["Writer", "Avg_Original_EdgeCount", "Avg_MinMax_EdgeCount", "Avg_PSNR"]]
+    # Save average CSV
+    avg_rows = [["Writer", "Avg_Original_EdgeCount", "Avg_CLAHE_EdgeCount", "Avg_PSNR"]]
     for writer_id, stats in edge_stats.items():
         avg_orig = np.mean(stats["original"])
-        avg_norm = np.mean(stats["normalized"])
+        avg_clahe = np.mean(stats["clahe"])
         avg_psnr = np.mean(stats["psnr"])
-        avg_rows.append([writer_id, round(avg_orig, 2), round(avg_norm, 2), round(avg_psnr, 2)])
+        avg_rows.append([writer_id, round(avg_orig, 2), round(avg_clahe, 2), round(avg_psnr, 2)])
 
     with open(avg_path, "w", newline="") as f:
         csv_writer = csv.writer(f)
         csv_writer.writerows(avg_rows)
-    print(f"📊 Per-writer average MinMax edge counts + PSNR saved to {avg_path}")
+    print(f"📊 Per-writer average CLAHE edge counts + PSNR saved to {avg_path}")
 
 def compute_distance_distributions(model, generator, dataset_name, base_output_dir="outputs/sop2", max_samples=5000):
     output_dir = os.path.join(base_output_dir, dataset_name)
@@ -288,19 +290,7 @@ def compute_distance_distributions(model, generator, dataset_name, base_output_d
                 inter_dists.append(dist)
             seen += 1
 
-    # Step 4: Histogram plot
-    plt.figure(figsize=(8, 5))
-    sns.histplot(intra_dists, label='Genuine-Genuine', color='blue', kde=True, stat="density", bins=50)
-    sns.histplot(inter_dists, label='Genuine-Forged', color='red', kde=True, stat="density", bins=50)
-    plt.title(f'Distance Distribution - {dataset_name}')
-    plt.xlabel('Euclidean Distance')
-    plt.ylabel('Density')
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "distance_distribution.png"))
-    plt.close()
-
-    # Step 5: UMAP visualization
+    # UMAP visualization
     reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, metric='euclidean')
     embedding_2d = reducer.fit_transform(embeddings)
     plt.figure(figsize=(8, 6))
@@ -308,11 +298,11 @@ def compute_distance_distributions(model, generator, dataset_name, base_output_d
     plt.colorbar(scatter, label="Writer ID")
     plt.title(f'UMAP of Embeddings - {dataset_name}')
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "umap.png"))
+    plt.savefig(os.path.join(output_dir, "umap_clahe.png"))
     plt.close()
 
-    # Step 6: Save stats
-    stats_path = os.path.join(output_dir, "distance_stats.txt")
+    # Save stats
+    stats_path = os.path.join(output_dir, "distance_stats_clahe.txt")
     with open(stats_path, "w") as f:
         f.write(f"Intra-class: mean={np.mean(intra_dists):.4f}, std={np.std(intra_dists):.4f}\n")
         f.write(f"Inter-class: mean={np.mean(inter_dists):.4f}, std={np.std(inter_dists):.4f}\n")
@@ -339,7 +329,7 @@ def generate_sop3_curves(history, dataset_name, base_output_dir="outputs/sop3"):
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "accuracy_curve.png"))
+    plt.savefig(os.path.join(output_dir, "accuracy_curve_clahe.png"))
     plt.close()
 
     # Loss plot
@@ -355,7 +345,7 @@ def generate_sop3_curves(history, dataset_name, base_output_dir="outputs/sop3"):
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "loss_curve.png"))
+    plt.savefig(os.path.join(output_dir, "loss_curve_clahe.png"))
     plt.close()
 
     print(f"📈 Accuracy and Training Curves saved to {output_dir}")
@@ -400,7 +390,7 @@ for dataset_name, config in datasets.items():
         img_width=IMG_SHAPE[1],
         batch_sz=BATCH_SIZE,
     )
-    pairs, labels = generator.generate_pairs()
+    pairs, labels = generator.generate_pairs(use_clahe=True)
     labels = np.array(labels).astype(np.int32)
 
      # Shuffle before splitting to avoid label imbalance
@@ -452,7 +442,7 @@ for dataset_name, config in datasets.items():
 
 
     # ========== Save the model ==========
-    model_save_path = f"models/{dataset_name}_siamese_model.h5"
+    model_save_path = f"models/{dataset_name}_siamese_model_clahe.h5"
     os.makedirs("models", exist_ok=True)
     model.save(model_save_path)
     print(f"model saved to: {model_save_path}")
