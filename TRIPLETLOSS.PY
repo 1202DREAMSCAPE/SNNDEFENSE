@@ -364,9 +364,8 @@ def compute_distance_distributions(model, generator, dataset_name, base_output_d
     X_test = np.array(X_test)
     y_test = np.array(y_test)
 
-    # Step 2: Extract embeddings from base model
-    base_model = model.get_layer("base_network")
-    embeddings = base_model.predict(X_test, batch_size=128, verbose=0)
+    # Step 2: Extract embeddings (no need to get base_model again)
+    embeddings = model.predict(X_test, batch_size=128, verbose=0)
 
     # Step 3: Compute distances
     intra_dists, inter_dists, seen = [], [], 0
@@ -411,6 +410,7 @@ def compute_distance_distributions(model, generator, dataset_name, base_output_d
         f.write(f"Inter-class: mean={np.mean(inter_dists):.4f}, std={np.std(inter_dists):.4f}\n")
 
     print(f"📊 Distance Distribution Outputs saved to {output_dir}")
+
 
 
 def generate_sop3_curves(history, dataset_name, base_output_dir="outputs/sop3"):
@@ -492,30 +492,22 @@ for dataset_name, config in datasets.items():
     print("🧠 Starting training with triplet loss ...")
     history = model.fit(
         train_dataset,
-        steps_per_epoch=len(generator.train_writers),  # or len(generator.train_writers) * samples_per_writer // BATCH_SIZE
+        steps_per_epoch=len(generator.train_writers),
         epochs=EPOCHS,
         verbose=2
     )
 
-   # ========== Save the model ==========
-    # Save only the weights (recommended for models with Lambda layers)
-    weights_path = f"models/{dataset_name}_triplet_weights.h5"
+    # Extract and save the base embedding network (shared CNN in triplet model)
+    base_network = model.get_layer("base_network")
+    embedding_weights_path = f"models/{dataset_name}_embedding.weights.h5"
     os.makedirs("models", exist_ok=True)
-    model.save_weights(weights_path)
-    print(f"✅ Weights saved to: {weights_path}")
+    base_network.save_weights(embedding_weights_path)
+    print(f"✅ Embedding weights saved to: {embedding_weights_path}")
 
-
-    # # ========== SOP 1 ==========
-    # print(f"\n📊 Running SOP 1 Evaluation for {dataset_name}")
-    # generate_sop1_outputs(
-    #     generator,
-    #     save_path=f"outputs/sop1/{dataset_name}_edge_count_summary.csv",
-    #     avg_path=f"outputs/sop1/{dataset_name}_edge_count_averages.csv"
-    # )
-
-    # # ========== SOP 3 ==========
-    # print(f"\n📈 Generating SOP 3 Curves for {dataset_name}")
-    # generate_sop3_curves(history, dataset_name)
+    # Save full triplet model weights if needed for resuming training
+    triplet_weights_path = f"models/{dataset_name}.weights.h5"
+    model.save_weights(triplet_weights_path)
+    print(f"✅ Triplet model weights saved to: {triplet_weights_path}")
 
     # ========== SOP 2 Evaluation (Writer-Independent) ==========
     print(f"\n🔍 Running SOP 2 Evaluation for {dataset_name}")
@@ -529,25 +521,22 @@ for dataset_name, config in datasets.items():
     if len(np.unique(test_labels)) < 2:
         print("⚠ Skipping evaluation — only one class present.")
     else:
-        # Rebuild the embedding model (same architecture as base network)
+        # Load the saved embedding model for inference
         embedding_model = create_base_network(IMG_SHAPE)
-
-        # Load the trained weights from Triplet model
-        weights_path = f"models/{dataset_name}_triplet_weights.h5"
-        embedding_model.load_weights(weights_path, by_name=True, skip_mismatch=True)
-        print(f"✅ Loaded embedding weights from {weights_path}")
+        embedding_model.load_weights(embedding_weights_path)
+        print(f"✅ Loaded embedding weights from {embedding_weights_path}")
 
         # Generate embeddings
         emb1 = embedding_model.predict(test_img1, batch_size=128)
         emb2 = embedding_model.predict(test_img2, batch_size=128)
 
-        # Compute distances
+        # Compute Euclidean distances
         distances = np.linalg.norm(emb1 - emb2, axis=1)
 
-        # Optionally normalize and convert to similarity scores (for metrics that expect probability-like values)
+        # Normalize distances to similarity scores
         y_pred_probs = 1 - distances / np.max(distances)
 
-        # Evaluate metrics using distance-based predictions
+        # Evaluate SOP 2 metrics
         metrics = evaluate_classification_metrics(test_labels, y_pred_probs, dataset_name=dataset_name)
         compute_distance_distributions(embedding_model, generator, dataset_name)
         results.append((dataset_name, metrics))
