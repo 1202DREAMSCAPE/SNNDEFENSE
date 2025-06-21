@@ -244,8 +244,6 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
 BATCH_SIZE = 128
 EPOCHS = 5
 IMG_SHAPE = (155, 220, 1)  
-weights_dir = 'base_weights_softmax'
-metrics_dir = 'baseline_metrics_softmax'
 os.makedirs(weights_dir, exist_ok=True)
 os.makedirs(metrics_dir, exist_ok=True)
 
@@ -267,9 +265,9 @@ datasets = {
      }
 }
 
-os.makedirs("outputs/base", exist_ok=True)
+os.makedirs("outputs/raw", exist_ok=True)
 # Define the path for the results CSV file
-results_csv_path = "outputs/base/results.csv"
+results_csv_path = "outputs/raw/results.csv"
 
 # Ensure the CSV file has a header if it doesn't exist
 if not os.path.exists(results_csv_path):
