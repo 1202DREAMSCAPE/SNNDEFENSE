@@ -73,6 +73,7 @@ def build_siamese_network(input_shape):
     Combines embeddings through dense layers and uses softmax for classification.
     Aligned with the 2024 study by Nasr et al.
     """
+    #call the signet architecture to create the base CNN
     base_network = create_base_network(input_shape)
 
     # Two inputs: image A and image B
@@ -96,50 +97,108 @@ def build_siamese_network(input_shape):
     model = Model(inputs=[input_a, input_b], outputs=output)
     return model
     
-def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, output_dir="outputs/sop2", threshold=0.5):
+def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, output_dir="outputs/sop2"):
     """
-    Evaluate binary classification metrics from softmax probability outputs.
-    Saves metrics to a .txt file if dataset_name is provided.
+    Evaluate binary classification metrics from softmax probability outputs using F1-optimal threshold.
+    Saves FAR/FRR vs threshold plot and logs metrics.
     """
-    # Predicted labels
-    y_pred = np.argmax(y_pred_probs, axis=1)
+    f1_threshold = eer = eer_threshold = auc = None
+    y_pred = np.zeros_like(y_true)
+
+    if len(np.unique(y_true)) == 2:
+        scores = y_pred_probs[:, 1]  # Probability of class '1' (forged)
+
+        # --- F1-Optimal Threshold selection ---
+        best_threshold = 0.5
+        best_f1 = 0.0
+        thresholds = np.linspace(0, 1, 200)
+
+        for thresh in thresholds:
+            y_pred_temp = (scores >= thresh).astype(int)
+            f1 = f1_score(y_true, y_pred_temp, zero_division=0)
+            if f1 > best_f1:
+                best_f1 = f1
+                best_threshold = thresh
+
+        f1_threshold = best_threshold
+        y_pred = (scores >= f1_threshold).astype(int)
+        print(f"📌 Optimal F1 Threshold: {f1_threshold:.4f} | Best F1: {best_f1:.4f}")
+
+        # Plot F1 score over thresholds
+        f1_scores = [f1_score(y_true, (scores >= t).astype(int), zero_division=0) for t in thresholds]
+        plt.figure(figsize=(8, 5))
+        plt.plot(thresholds, f1_scores, label="F1 Score", color="darkorange")
+        plt.axvline(x=f1_threshold, color="green", linestyle="--", label=f"Best F1 = {best_f1:.4f} at {f1_threshold:.4f}")
+        plt.title("F1 Score vs Threshold")
+        plt.xlabel("Threshold")
+        plt.ylabel("F1 Score")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+
+        plot_dir = os.path.join(output_dir, "plots")
+        os.makedirs(plot_dir, exist_ok=True)
+        f1_plot_path = os.path.join(plot_dir, f"{dataset_name}_f1_threshold_curve.png")
+        plt.savefig(f1_plot_path)
+        plt.close()
+
+        # Compute FAR and FRR at F1-optimal threshold
+        cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
+        if cm.shape == (2, 2):
+            tn, fp, fn, tp = cm.ravel()
+            far = fp / (fp + tn + 1e-6)
+            frr = fn / (fn + tp + 1e-6)
+        else:
+            far = frr = 0.0
+            print("⚠ Confusion matrix incomplete at F1 threshold.")
+
+        # Bar plot of FAR and FRR
+        plt.figure(figsize=(5, 5))
+        bars = plt.bar(['FAR', 'FRR'], [far, frr], color=['red', 'blue'])
+        plt.ylim(0, 1)
+        for bar in bars:
+            yval = bar.get_height()
+            plt.text(bar.get_x() + bar.get_width()/2, yval + 0.02, f"{yval:.4f}", ha='center', va='bottom')
+
+        plt.title(f"FAR and FRR at F1 Threshold ({f1_threshold:.4f})")
+        plt.ylabel("Error Rate")
+        plt.tight_layout()
+
+        bar_path = os.path.join(plot_dir, f"{dataset_name}_f1_farfrr_bar.png")
+        plt.savefig(bar_path)
+        plt.close()
+        print(f"📊 FAR/FRR bar chart saved to {bar_path}")
+
+        # ROC Curve and EER
+        fpr, tpr, thresholds = roc_curve(y_true, scores)
+        auc = roc_auc_score(y_true, scores)
+        fnr = 1 - tpr
+        eer_idx = np.nanargmin(np.abs(fnr - fpr))
+        eer = fpr[eer_idx]
+        eer_threshold = thresholds[eer_idx]
+
+        # FAR/FRR vs Threshold curve
+        plt.figure(figsize=(8, 5))
+        plt.plot(thresholds, fpr, label='FAR (False Acceptance Rate)', color='red')
+        plt.plot(thresholds, fnr, label='FRR (False Rejection Rate)', color='blue')
+        plt.axvline(x=f1_threshold, color='green', linestyle='--', label=f'F1 Threshold = {f1_threshold:.4f}')
+        plt.title('FAR and FRR vs Threshold')
+        plt.xlabel('Threshold')
+        plt.ylabel('Error Rate')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+
+        farfrr_curve_path = os.path.join(plot_dir, f"{dataset_name}_far_frr_f1.png")
+        plt.savefig(farfrr_curve_path)
+        plt.close()
+        print(f"📉 FAR/FRR curve saved to {farfrr_curve_path}")
 
     # Basic metrics
     acc = accuracy_score(y_true, y_pred)
     f1 = f1_score(y_true, y_pred, zero_division=0)
 
-    # ROC AUC and EER
-    if len(np.unique(y_true)) == 2:
-        auc = roc_auc_score(y_true, y_pred_probs[:, 1])
-        fpr, tpr, thresholds = roc_curve(y_true, y_pred_probs[:, 1])
-        fnr = 1 - tpr
-        eer_idx = np.nanargmin(np.abs(fnr - fpr))
-        eer = fpr[eer_idx]
-        eer_threshold = thresholds[eer_idx]
-    else:
-        auc = eer = eer_threshold = None
-        print("⚠ ROC AUC and EER not computed (only one class in y_true)")
-
-    # Confusion matrix and derived metrics
-    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
-    if cm.shape == (2, 2):
-        tn, fp, fn, tp = cm.ravel()
-        far = fp / (fp + tn + 1e-6)
-        frr = fn / (fn + tp + 1e-6)
-    else:
-        tn = fp = fn = tp = far = frr = 0.0
-        print("⚠ Confusion matrix incomplete (only one class present)")
-
-    # Print to console
-    print("🔎 Evaluation Metrics:")
-    print(f"✅ Accuracy:  {acc:.4f}")
-    print(f"✅ F1 Score:  {f1:.4f}")
-    print(f"✅ ROC AUC:   {auc:.4f}" if auc is not None else "❌ ROC AUC:   Not available")
-    print(f"✅ FAR:       {far:.4f}")
-    print(f"✅ FRR:       {frr:.4f}")
-    print(f"✅ EER:       {eer:.4f} at threshold {eer_threshold:.4f}" if eer is not None else "❌ EER:       Not available")
-
-    # Save to file if dataset name is provided
+    # Save metrics
     if dataset_name:
         os.makedirs(output_dir, exist_ok=True)
         filepath = os.path.join(output_dir, f"{dataset_name}_metrics.txt")
@@ -155,6 +214,8 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
                 f.write(f"EER            : {eer:.4f} at threshold {eer_threshold:.4f}\n")
             else:
                 f.write(f"EER            : Not available\n")
+            if f1_threshold is not None:
+                f.write(f"F1 Threshold   : {f1_threshold:.4f}\n")
         print(f"📝 Metrics saved to {filepath}")
 
     return {
@@ -164,7 +225,8 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
         "far": far,
         "frr": frr,
         "eer": eer,
-        "eer_threshold": eer_threshold
+        "eer_threshold": eer_threshold,
+        "f1_threshold": f1_threshold
     }
 
 def minmax_normalize(img):
@@ -199,7 +261,7 @@ def compute_edge_count(image):
 def generate_sop1_outputs(generator, 
                           save_path="outputs/edge_count_summary.csv", 
                           avg_path="outputs/edge_count_averages.csv"):
-    max_visualizations = 5  # Number of images to visualize per writer
+    max_visualizations = 5
     rows = [["Writer", "Image", "Original_EdgeCount", "MinMax_EdgeCount", "PSNR"]]
     edge_stats = defaultdict(lambda: {"original": [], "normalized": [], "psnr": []})
 
@@ -400,7 +462,7 @@ for dataset_name, config in datasets.items():
         img_width=IMG_SHAPE[1],
         batch_sz=BATCH_SIZE,
     )
-    pairs, labels = generator.generate_pairs(mining=True)
+    pairs, labels = generator.generate_pairs()
     labels = np.array(labels).astype(np.int32)
 
      # Shuffle before splitting to avoid label imbalance
@@ -447,6 +509,10 @@ for dataset_name, config in datasets.items():
         verbose=2
     )
 
+    save_softmax_predictions(generator, model, dataset_name=dataset_name, split="train")
+    save_softmax_predictions(generator, model, dataset_name=dataset_name, split="test")
+
+
     # ========== Save the model ==========
     model_save_path = f"models/{dataset_name}_siamese_model.h5"
     os.makedirs("models", exist_ok=True)
@@ -456,6 +522,19 @@ for dataset_name, config in datasets.items():
     train_time = time.time() - start_time
     print(f"⏱ Training completed in {train_time:.2f} seconds")
 
-    # ========== SOP 3 ==========
-    print(f"\n📈 Generating SOP 3 Curves for {dataset_name}")
-    generate_sop3_curves(history, dataset_name)
+    print(f"\n🔍 Running SOP 2 Evaluation for {dataset_name}")
+
+    test_pairs, test_labels = generator.generate_pairs(split='test', use_raw=True)
+    test_img1 = np.array([pair[0] for pair in test_pairs])
+    test_img2 = np.array([pair[1] for pair in test_pairs])
+    test_labels = np.array(test_labels)
+
+    print("Label Distribution:", dict(zip(*np.unique(test_labels, return_counts=True))))
+    if len(np.unique(test_labels)) < 2:
+        print("⚠ Skipping evaluation — only one class present.")
+    else:
+        y_pred_probs = model.predict([test_img1, test_img2], batch_size=128)
+        metrics = evaluate_classification_metrics(test_labels, y_pred_probs, dataset_name=dataset_name)
+        compute_distance_distributions(model, generator, dataset_name)
+        results.append((dataset_name, metrics))
+        print(f"✅ Evaluation Complete for {dataset_name}")

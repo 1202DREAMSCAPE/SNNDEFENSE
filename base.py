@@ -27,7 +27,6 @@ import umap.umap_ as umap
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from collections import defaultdict, Counter
-from pair_log import save_softmax_predictions
 from skimage.metrics import peak_signal_noise_ratio as compare_psnr
 
 
@@ -73,6 +72,7 @@ def build_siamese_network(input_shape):
     Combines embeddings through dense layers and uses softmax for classification.
     Aligned with the 2024 study by Nasr et al.
     """
+    #call the signet architecture to create the base CNN
     base_network = create_base_network(input_shape)
 
     # Two inputs: image A and image B
@@ -96,29 +96,87 @@ def build_siamese_network(input_shape):
     model = Model(inputs=[input_a, input_b], outputs=output)
     return model
     
-def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, output_dir="outputs/sop2", threshold=0.5):
+def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, output_dir="outputs/sop2"):
     """
-    Evaluate binary classification metrics from softmax probability outputs.
-    Saves metrics to a .txt file if dataset_name is provided.
+    Evaluate binary classification metrics from softmax probability outputs using Youden's J threshold.
+    Also saves FAR/FRR vs threshold plot and logs metrics.
     """
-    # Predicted labels
-    y_pred = np.argmax(y_pred_probs, axis=1)
-
-    # Basic metrics
-    acc = accuracy_score(y_true, y_pred)
-    f1 = f1_score(y_true, y_pred, zero_division=0)
-
-    # ROC AUC and EER
+    # --- Youden's J threshold selection from ROC curve ---
     if len(np.unique(y_true)) == 2:
-        auc = roc_auc_score(y_true, y_pred_probs[:, 1])
-        fpr, tpr, thresholds = roc_curve(y_true, y_pred_probs[:, 1])
+        scores = y_pred_probs[:, 1]  # Probability of class '1' (forged)
+        fpr, tpr, thresholds = roc_curve(y_true, scores)
+
+        j_scores = tpr - fpr
+        j_best_idx = np.argmax(j_scores)
+        youden_threshold = thresholds[j_best_idx]
+
+        # Plot Youden's J statistic across thresholds
+        plt.figure(figsize=(8, 5))
+        plt.plot(thresholds, j_scores, label="Youden’s J (TPR - FPR)", color="purple")
+        plt.axvline(x=youden_threshold, color="green", linestyle="--", label=f"Best J = {j_scores[j_best_idx]:.4f} at {youden_threshold:.4f}")
+        plt.title("Youden’s J Statistic vs Threshold")
+        plt.xlabel("Threshold")
+        plt.ylabel("Youden’s J (TPR - FPR)")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+
+        # Save the plot
+        plot_dir = os.path.join(output_dir, "plots")
+        os.makedirs(plot_dir, exist_ok=True)
+        plot_path = os.path.join(plot_dir, f"{dataset_name}_youden_j_curve.png")
+        plt.savefig(plot_path)
+        plt.close()
+
+        print(f"📈 Youden’s J curve saved to {plot_path}")
+
+                # Compute FAR and FRR at Youden threshold
+        y_pred_youden = (scores >= youden_threshold).astype(int)
+        cm = confusion_matrix(y_true, y_pred_youden, labels=[0, 1])
+
+        if cm.shape == (2, 2):
+            tn, fp, fn, tp = cm.ravel()
+            far_youden = fp / (fp + tn + 1e-6)
+            frr_youden = fn / (fn + tp + 1e-6)
+        else:
+            far_youden = frr_youden = 0.0
+            print("⚠ Confusion matrix incomplete at Youden threshold.")
+
+        # Bar plot of FAR and FRR
+        plt.figure(figsize=(5, 5))
+        bars = plt.bar(['FAR', 'FRR'], [far_youden, frr_youden], color=['red', 'blue'])
+        plt.ylim(0, 1)
+        for bar in bars:
+            yval = bar.get_height()
+            plt.text(bar.get_x() + bar.get_width()/2, yval + 0.02, f"{yval:.4f}", ha='center', va='bottom')
+
+        plt.title(f"FAR and FRR at Youden’s J Threshold ({youden_threshold:.4f})")
+        plt.ylabel("Error Rate")
+        plt.tight_layout()
+
+        # Save bar chart
+        bar_path = os.path.join(plot_dir, f"{dataset_name}_youden_farfrr_bar.png")
+        plt.savefig(bar_path)
+        plt.close()
+        print(f"📊 FAR/FRR bar chart saved to {bar_path}")
+
+        # Use Youden's threshold for binary classification
+        y_pred = (scores >= youden_threshold).astype(int)
+
+        # AUC, EER, FNR
+        auc = roc_auc_score(y_true, scores)
         fnr = 1 - tpr
         eer_idx = np.nanargmin(np.abs(fnr - fpr))
         eer = fpr[eer_idx]
         eer_threshold = thresholds[eer_idx]
     else:
-        auc = eer = eer_threshold = None
-        print("⚠ ROC AUC and EER not computed (only one class in y_true)")
+        auc = eer = eer_threshold = youden_threshold = None
+        y_pred = np.zeros_like(y_true)
+        print("⚠ ROC AUC, EER, Youden threshold not computed (only one class in y_true)")
+
+    # Basic metrics
+    acc = accuracy_score(y_true, y_pred)
+    f1 = f1_score(y_true, y_pred, zero_division=0)
 
     # Confusion matrix and derived metrics
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
@@ -138,6 +196,28 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
     print(f"✅ FAR:       {far:.4f}")
     print(f"✅ FRR:       {frr:.4f}")
     print(f"✅ EER:       {eer:.4f} at threshold {eer_threshold:.4f}" if eer is not None else "❌ EER:       Not available")
+    print(f"✅ Youden J Threshold: {youden_threshold:.4f}" if youden_threshold is not None else "❌ Youden J: Not available")
+
+    # FAR/FRR Curve Visualization
+    if len(np.unique(y_true)) == 2:
+        plt.figure(figsize=(8, 5))
+        plt.plot(thresholds, fpr, label='FAR (False Acceptance Rate)', color='red')
+        plt.plot(thresholds, 1 - tpr, label='FRR (False Rejection Rate)', color='blue')
+        plt.axvline(x=youden_threshold, color='green', linestyle='--', label=f'Youden J = {youden_threshold:.4f}')
+        plt.title('FAR and FRR vs Threshold')
+        plt.xlabel('Threshold')
+        plt.ylabel('Error Rate')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+
+        # Save the plot
+        plot_dir = os.path.join(output_dir, "plots")
+        os.makedirs(plot_dir, exist_ok=True)
+        plot_path = os.path.join(plot_dir, f"{dataset_name}_far_frr_youden.png")
+        plt.savefig(plot_path)
+        plt.close()
+        print(f"📉 FAR/FRR curve saved to {plot_path}")
 
     # Save to file if dataset name is provided
     if dataset_name:
@@ -155,6 +235,8 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
                 f.write(f"EER            : {eer:.4f} at threshold {eer_threshold:.4f}\n")
             else:
                 f.write(f"EER            : Not available\n")
+            if youden_threshold is not None:
+                f.write(f"Youden J        : {youden_threshold:.4f}\n")
         print(f"📝 Metrics saved to {filepath}")
 
     return {
@@ -164,7 +246,8 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
         "far": far,
         "frr": frr,
         "eer": eer,
-        "eer_threshold": eer_threshold
+        "eer_threshold": eer_threshold,
+        "youden_threshold": youden_threshold
     }
 
 def minmax_normalize(img):
@@ -403,7 +486,7 @@ for dataset_name, config in datasets.items():
     pairs, labels = generator.generate_pairs()
     labels = np.array(labels).astype(np.int32)
 
-     # Shuffle before splitting to avoid label imbalance
+    # Shuffle before splitting to avoid label imbalance
     combined = list(zip(pairs, labels))
     np.random.shuffle(combined)
     pairs, labels = zip(*combined)
@@ -420,14 +503,6 @@ for dataset_name, config in datasets.items():
     train_img2 = np.array([pair[1] for pair in train_pairs])
     val_img1 = np.array([pair[0] for pair in val_pairs])
     val_img2 = np.array([pair[1] for pair in val_pairs])
-
-    # Step 5: Sanity checks
-    print("Sample val labels:", val_labels[:10])
-    print("Unique val labels:", np.unique(val_labels))
-    print("Train label distribution:", Counter(train_labels))
-    print("Val label distribution:", Counter(val_labels))
-    print("Label dtype:", train_labels.dtype, val_labels.dtype)
-    print("Label shape:", train_labels.shape, val_labels.shape)
 
     # Build model using softmax-based classification
     model = build_siamese_network(IMG_SHAPE)
@@ -447,10 +522,6 @@ for dataset_name, config in datasets.items():
         verbose=2
     )
 
-    save_softmax_predictions(generator, model, dataset_name=dataset_name, split="train")
-    save_softmax_predictions(generator, model, dataset_name=dataset_name, split="test")
-
-
     # ========== Save the model ==========
     model_save_path = f"models/{dataset_name}_siamese_model.h5"
     os.makedirs("models", exist_ok=True)
@@ -459,17 +530,16 @@ for dataset_name, config in datasets.items():
 
     train_time = time.time() - start_time
     print(f"⏱ Training completed in {train_time:.2f} seconds")
-    # ========== SOP 1 ==========
-    print(f"\n📊 Running SOP 1 Evaluation for {dataset_name}")
-    generate_sop1_outputs(
-        generator,
-        save_path=f"outputs/sop1/{dataset_name}_edge_count_summary.csv",
-        avg_path=f"outputs/sop1/{dataset_name}_edge_count_averages.csv"
-    )
-
-    # ========== SOP 3 ==========
-    print(f"\n📈 Generating SOP 3 Curves for {dataset_name}")
-    generate_sop3_curves(history, dataset_name)
+    # # ========== SOP 1 ==========
+    # print(f"\n📊 Running SOP 1 Evaluation for {dataset_name}")
+    # generate_sop1_outputs(
+    #     generator,
+    #     save_path=f"outputs/sop1/{dataset_name}_edge_count_summary.csv",
+    #     avg_path=f"outputs/sop1/{dataset_name}_edge_count_averages.csv"
+    # )
+    # # ========== SOP 3 ==========
+    # print(f"\n📈 Generating SOP 3 Curves for {dataset_name}")
+    # generate_sop3_curves(history, dataset_name)
 
     # ========== SOP 2 Evaluation (Writer-Independent) ==========
     print(f"\n🔍 Running SOP 2 Evaluation for {dataset_name}")

@@ -264,91 +264,42 @@ def generate_sop1_outputs(generator,
         csv_writer.writerows(avg_rows)
     print(f"📊 Per-writer average CLAHE edge counts + PSNR saved to {avg_path}")
 
-def compute_distance_distributions(model, generator, dataset_name, base_output_dir="outputs/sop2", max_samples=5000):
-    output_dir = os.path.join(base_output_dir, dataset_name)
-    os.makedirs(output_dir, exist_ok=True)
+# Modify evaluation to include noisy and CLAHE-preprocessed images
+def evaluate_with_noise_and_clahe(model, generator, test_img1, test_img2, test_labels, dataset_name, output_dir="outputs/sop2"):
+    """
+    Evaluate model performance on noisy and CLAHE-preprocessed images.
+    Saves metrics for both noisy and CLAHE-preprocessed images.
+    """
+    # Add noise to test images
+    noisy_img1 = np.array([add_noise(img) for img in test_img1])
+    noisy_img2 = np.array([add_noise(img) for img in test_img2])
 
-    # Step 1: Get unbatched test data
-    X_test, y_test = generator.get_unbatched_data()
-    X_test = np.array(X_test)
-    y_test = np.array(y_test)
+    # Apply CLAHE using preprocess_image_clahe from SignatureDataGenerator
+    clahe_img1 = np.array([generator.preprocess_image_clahe_from_array(img) for img in test_img1])
+    clahe_img2 = np.array([generator.preprocess_image_clahe_from_array(img) for img in test_img2])
 
-    # Step 2: Extract embeddings from base model
-    base_model = model.get_layer("base_network")
-    embeddings = base_model.predict(X_test, batch_size=128, verbose=0)
+    # Evaluate on noisy images
+    print("\n🔍 Evaluating on noisy images...")
+    noisy_pred_probs = model.predict([noisy_img1, noisy_img2], batch_size=128)
+    noisy_metrics = evaluate_classification_metrics(test_labels, noisy_pred_probs, dataset_name=f"{dataset_name}_noisy", output_dir=output_dir)
 
-    # Step 3: Compute distances
-    intra_dists, inter_dists, seen = [], [], 0
-    for i in range(len(embeddings)):
-        for j in range(i + 1, len(embeddings)):
-            if seen >= max_samples:
-                break
-            dist = np.linalg.norm(embeddings[i] - embeddings[j])
-            if y_test[i] == y_test[j]:
-                intra_dists.append(dist)
-            else:
-                inter_dists.append(dist)
-            seen += 1
+    # Evaluate on CLAHE-preprocessed images
+    print("\n🔍 Evaluating on CLAHE-preprocessed images...")
+    clahe_pred_probs = model.predict([clahe_img1, clahe_img2], batch_size=128)
+    clahe_metrics = evaluate_classification_metrics(test_labels, clahe_pred_probs, dataset_name=f"{dataset_name}_clahe", output_dir=output_dir)
 
-    # UMAP visualization
-    reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, metric='euclidean')
-    embedding_2d = reducer.fit_transform(embeddings)
-    plt.figure(figsize=(8, 6))
-    scatter = plt.scatter(embedding_2d[:, 0], embedding_2d[:, 1], c=y_test, cmap='tab20', s=10)
-    plt.colorbar(scatter, label="Writer ID")
-    plt.title(f'UMAP of Embeddings - {dataset_name}')
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "umap_clahe.png"))
-    plt.close()
+    return noisy_metrics, clahe_metrics
 
-    # Save stats
-    stats_path = os.path.join(output_dir, "distance_stats_clahe.txt")
-    with open(stats_path, "w") as f:
-        f.write(f"Intra-class: mean={np.mean(intra_dists):.4f}, std={np.std(intra_dists):.4f}\n")
-        f.write(f"Inter-class: mean={np.mean(inter_dists):.4f}, std={np.std(inter_dists):.4f}\n")
-
-    print(f"📊 Distance Distribution Outputs saved to {output_dir}")
-
-
-def generate_sop3_curves(history, dataset_name, base_output_dir="outputs/sop3"):
-    output_dir = os.path.join(base_output_dir, dataset_name)
-    os.makedirs(output_dir, exist_ok=True)
-
-    print("📋 History keys:", history.history.keys())
-
-    # Directly access correct keys now
-    acc = history.history['sparse_categorical_accuracy']
-    val_acc = history.history['val_sparse_categorical_accuracy']
-
-    plt.figure()
-    plt.plot(acc, label='Train Accuracy')
-    plt.plot(val_acc, label='Validation Accuracy')
-    plt.title(f"{dataset_name} - Training vs Validation Accuracy")
-    plt.xlabel('Epochs')
-    plt.ylabel('Accuracy')
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "accuracy_curve_clahe.png"))
-    plt.close()
-
-    # Loss plot
-    loss = history.history['loss']
-    val_loss = history.history['val_loss']
-
-    plt.figure()
-    plt.plot(loss, label='Train Loss')
-    plt.plot(val_loss, label='Validation Loss')
-    plt.title(f"{dataset_name} - Training vs Validation Loss")
-    plt.xlabel('Epochs')
-    plt.ylabel('Loss')
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "loss_curve_clahe.png"))
-    plt.close()
-
-    print(f"📈 Accuracy and Training Curves saved to {output_dir}")
+def add_noise(img):
+    if noise_type == "gaussian":
+        row, col = img.shape[:2]
+        mean = 0
+        sigma = 15  # adjust as needed
+        gauss = np.random.normal(mean, sigma, (row, col)).reshape(row, col)
+        noisy = img + gauss
+        return np.clip(noisy, 0, 255).astype(np.uint8)
+    else:
+        raise ValueError(f"Unknown noise type: {noise_type}")
 
 
 # Parameters
@@ -437,10 +388,6 @@ for dataset_name, config in datasets.items():
         verbose=2
     )
 
-    save_softmax_predictions(generator, model, dataset_name=dataset_name, split="train")
-    save_softmax_predictions(generator, model, dataset_name=dataset_name, split="test")
-
-
     # ========== Save the model ==========
     model_save_path = f"models/{dataset_name}_siamese_model_clahe.h5"
     os.makedirs("models", exist_ok=True)
@@ -457,24 +404,19 @@ for dataset_name, config in datasets.items():
         avg_path=f"outputs/sop1/{dataset_name}_edge_count_averages.csv"
     )
 
-    # ========== SOP 3 ==========
-    print(f"\n📈 Generating SOP 3 Curves for {dataset_name}")
-    generate_sop3_curves(history, dataset_name)
-
-    # ========== SOP 2 Evaluation (Writer-Independent) ==========
-    print(f"\n🔍 Running SOP 2 Evaluation for {dataset_name}")
-
+    # ========== Evaluate with Noise and CLAHE ==========
+    print(f"\n🔍 Evaluating with Noise and CLAHE for {dataset_name}")
     test_pairs, test_labels = generator.generate_pairs(split='test', use_raw=True)
     test_img1 = np.array([pair[0] for pair in test_pairs])
     test_img2 = np.array([pair[1] for pair in test_pairs])
     test_labels = np.array(test_labels)
 
-    print("Label Distribution:", dict(zip(*np.unique(test_labels, return_counts=True))))
     if len(np.unique(test_labels)) < 2:
         print("⚠ Skipping evaluation — only one class present.")
     else:
-        y_pred_probs = model.predict([test_img1, test_img2], batch_size=128)
-        metrics = evaluate_classification_metrics(test_labels, y_pred_probs, dataset_name=dataset_name)
-        compute_distance_distributions(model, generator, dataset_name)
-        results.append((dataset_name, metrics))
+        noisy_metrics, clahe_metrics = evaluate_with_noise_and_clahe(
+            model, generator, test_img1, test_img2, test_labels, dataset_name
+        )
         print(f"✅ Evaluation Complete for {dataset_name}")
+        print(f"Noisy Metrics: {noisy_metrics}")
+        print(f"CLAHE Metrics: {clahe_metrics}")

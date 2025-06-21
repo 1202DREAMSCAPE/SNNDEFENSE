@@ -8,8 +8,8 @@ import skimage
 from skimage.measure import shannon_entropy
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
-
-#import faiss
+import random
+from sklearn.metrics.pairwise import cosine_distances
 
 # Ensure reproducibility
 np.random.seed(1337)
@@ -105,6 +105,10 @@ class SignatureDataGenerator:
             print(f"⚠ Error processing image {img_path}: {e}")
             return np.zeros((self.img_height, self.img_width, 1), dtype=np.float32)
 
+    def preprocess_image_clahe_from_array(self, img):
+        img_uint8 = (img * 255).astype(np.uint8) if img.max() <= 1.0 else img.astype(np.uint8)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        return clahe.apply(img_uint8)
             
     def get_all_data_with_labels(self):
         """
@@ -276,8 +280,7 @@ class SignatureDataGenerator:
             print(f"⚠ Error in raw preprocess: {e}")
             return np.zeros((self.img_height, self.img_width, 1), dtype=np.float32)
 
-
-    def generate_pairs(self, split='train', return_metadata=False, use_clahe=False, use_raw=False, model=None, mining=False):
+    def generate_pairs(self, split='train', return_metadata=False, use_clahe=False, use_raw=False):
         """
         Generate positive and negative pairs for training or evaluation.
 
@@ -286,16 +289,12 @@ class SignatureDataGenerator:
             return_metadata (bool): If True, returns filenames and writer IDs for logging.
             use_clahe (bool): If True, apply CLAHE preprocessing.
             use_raw (bool): If True, use raw preprocessing instead of normalized.
-            model (tf.keras.Model): Embedding model for hard negative mining.
-            mining (bool): If True, perform hard negative mining instead of random sampling.
 
         Returns:
             pairs (list of tuple): Each tuple contains two preprocessed images (img1, img2).
             labels (list of int): 1 if same writer (genuine pair), else 0.
             meta (optional): List of tuples (filename1, filename2, writer_id or writer1_vs_writer2).
         """
-        import random
-        from sklearn.metrics.pairwise import cosine_distances
 
         # === Load data and writer info based on split
         if split == 'train':
@@ -335,19 +334,10 @@ class SignatureDataGenerator:
                     label_to_images.setdefault(writer, []).append(img)
                     label_to_filenames.setdefault(writer, []).append(file)
 
-        # === Compute embeddings if hard mining is enabled
-        img_embeddings = {}
-        if mining and model is not None:
-            print("🔍 Computing embeddings for hard negative mining ...")
-            for writer in label_to_images:
-                images = np.stack(label_to_images[writer], axis=0)
-                embeddings = model.predict(images, verbose=0)
-                img_embeddings[writer] = embeddings
-
         pairs, labels = [], []
         meta = []
 
-        # === Create positive pairs
+        # === Get positive pairs
         for writer in label_to_images:
             imgs = label_to_images[writer]
             fns = label_to_filenames[writer]
@@ -357,45 +347,24 @@ class SignatureDataGenerator:
                 if return_metadata:
                     meta.append((fns[i], fns[i + 1], f"writer_{writer:03d}"))
 
-        # === Create negative pairs
+        # === Get negative pairs
         writer_ids = list(label_to_images.keys())
         for writer in label_to_images:
             pos_imgs = label_to_images[writer]
-            pos_fns  = label_to_filenames[writer]
-            pos_embs = img_embeddings[writer] if mining and model is not None else None
+            pos_fns = label_to_filenames[writer]
 
             for i in range(len(pos_imgs) - 1):
                 anchor_img = pos_imgs[i]
-                anchor_fn  = pos_fns[i]
-                anchor_emb = pos_embs[i].reshape(1, -1) if pos_embs is not None else None
+                anchor_fn = pos_fns[i]
 
-                if mining and model is not None:
-                    # Hard negative mining: closest image from different writer
-                    min_dist = float("inf")
-                    hardest_img, hardest_fn, hardest_writer = None, None, None
-                    for w2 in writer_ids:
-                        if w2 == writer: continue
-                        for j, emb in enumerate(img_embeddings[w2]):
-                            dist = cosine_distances(anchor_emb, emb.reshape(1, -1))[0][0]
-                            if dist < min_dist:
-                                min_dist = dist
-                                hardest_img = label_to_images[w2][j]
-                                hardest_fn = label_to_filenames[w2][j]
-                                hardest_writer = w2
-                    if hardest_img is not None:
-                        pairs.append((anchor_img, hardest_img))
-                        labels.append(0)
-                        if return_metadata:
-                            meta.append((anchor_fn, hardest_fn, f"{writer}_vs_{hardest_writer}"))
-                else:
-                    # Random negative pairing
-                    w2 = random.choice([w for w in writer_ids if w != writer])
-                    img2 = random.choice(label_to_images[w2])
-                    fn2 = random.choice(label_to_filenames[w2])
-                    pairs.append((anchor_img, img2))
-                    labels.append(0)
-                    if return_metadata:
-                        meta.append((anchor_fn, fn2, f"{writer}_vs_{w2}"))
+                # Random negative pairing
+                w2 = random.choice([w for w in writer_ids if w != writer])
+                img2 = random.choice(label_to_images[w2])
+                fn2 = random.choice(label_to_filenames[w2])
+                pairs.append((anchor_img, img2))
+                labels.append(0)
+                if return_metadata:
+                    meta.append((anchor_fn, fn2, f"{writer}_vs_{w2}"))
 
         # print(f"✅ Generated {len(pairs)} pairs ({labels.count(1)} genuine, {labels.count(0)} forged})")
 
@@ -404,8 +373,7 @@ class SignatureDataGenerator:
         else:
             return pairs, labels
 
-
-    def generate_triplets(self, dataset_path, writer):
+    def generate_triplets(self, dataset_path, writer, use_clahe=False, use_raw=False):
         writer_path = os.path.join(dataset_path, f"writer_{writer:03d}")
         genuine_path = os.path.join(writer_path, "genuine")
         forged_path = os.path.join(writer_path, "forged")
@@ -421,21 +389,30 @@ class SignatureDataGenerator:
 
         triplets = []
 
+        # ✅ Choose the correct preprocessing function
+        if use_raw:
+            preprocess = self.preprocess_image_raw
+        elif use_clahe:
+            preprocess = self.preprocess_image_clahe
+        else:
+            preprocess = self.preprocess_image
+
+        # ✅ Build triplets
         for i in range(len(genuine_imgs) - 1):
             anchor_path = genuine_imgs[i]
             positive_path = genuine_imgs[i + 1]
             negative_path = random.choice(forged_imgs)
 
-            # Load and preprocess images (e.g., using CLAHE + grayscale)
-            anchor_img = self.preprocess_image(anchor_path)
-            positive_img = self.preprocess_image(positive_path)
-            negative_img = self.preprocess_image(negative_path)
+            anchor_img   = preprocess(anchor_path)
+            positive_img = preprocess(positive_path)
+            negative_img = preprocess(negative_path)
 
             triplets.append((anchor_img, positive_img, negative_img))
 
         return triplets
 
-    def get_triplet_data(self, writers_list):
+
+    def get_triplet_data(self, writers_list,use_clahe=False, use_raw=False):
         """Generate triplet data formatted for TensorFlow's Dataset API."""
         triplets = []
 
@@ -444,14 +421,14 @@ class SignatureDataGenerator:
                 print(f"⚠ Skipping writer {writer} (not in train_writers)")
                 continue  
 
-            writer_triplets = self.generate_triplets(dataset_path, writer)
+            writer_triplets = self.generate_triplets(dataset_path, writer, use_clahe=use_clahe, use_raw=use_raw)
             if writer_triplets:
                 triplets.extend(writer_triplets)
             
-            if writer_triplets:
-                print(f"🟢 Writer {writer} generated {len(writer_triplets)} triplets.")
-            else:
-                print(f"⚠ Writer {writer} has no valid triplets.")
+            # if writer_triplets:
+            #     # print(f"🟢 Writer {writer} generated {len(writer_triplets)} triplets.")
+            # else:
+            #     print(f"⚠ Writer {writer} has no valid triplets.")
 
         def generator():
             for anchor, positive, negative in triplets:
@@ -468,8 +445,10 @@ class SignatureDataGenerator:
 
         return tf.data.Dataset.from_generator(generator, output_signature=output_signature).batch(self.batch_sz)
 
-    def get_triplet_train(self):
+    def get_triplet_train(self, use_clahe=False):
         """Generate triplet training data using TensorFlow Dataset."""
-        return self.get_triplet_data(self.train_writers).repeat().prefetch(tf.data.experimental.AUTOTUNE)
+        return (self.get_triplet_data(self.train_writers, use_clahe=use_clahe)
+                    .repeat()
+                    .prefetch(tf.data.experimental.AUTOTUNE))
 
         
