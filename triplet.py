@@ -13,6 +13,7 @@ from SignatureDataGenerator import SignatureDataGenerator
 from collections import Counter
 import seaborn as sns
 import umap
+import csv
 
 np.random.seed(1337)
 random.seed(1337)
@@ -96,7 +97,7 @@ def build_triplet_network(input_shape):
 
 def compute_distance_distributions(
     weights_path, generator, dataset_name,
-    base_output_dir="outputs/sop2", max_samples=5000,
+    base_output_dir="outputs/tripletloss", max_samples=5000,
     img_shape=(155, 220, 1)
 ):
     output_dir = os.path.join(base_output_dir, dataset_name)
@@ -177,6 +178,17 @@ datasets = {
         "test_writers": list(range(191, 260))
     }
 }
+
+os.makedirs("outputs/tripletloss", exist_ok=True)
+# Define the path for the results CSV file
+results_csv_path = "outputs/tripletloss/results.csv"
+
+# Ensure the CSV file has a header if it doesn't exist
+if not os.path.exists(results_csv_path):
+    with open(results_csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Dataset", "Accuracy", "F1 Score", "ROC AUC", "FAR", "FRR", "Youden Threshold"])
+
 
 results = []
 

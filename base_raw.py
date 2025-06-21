@@ -29,6 +29,8 @@ from sklearn.manifold import TSNE
 from collections import defaultdict, Counter
 from skimage.metrics import peak_signal_noise_ratio as compare_psnr
 from tensorflow.keras import mixed_precision
+from tensorflow.keras import backend as K
+import gc
 
 mixed_precision.set_global_policy("mixed_float16")
 np.random.seed(1337)
@@ -97,7 +99,7 @@ def build_siamese_network(input_shape):
     model = Model(inputs=[input_a, input_b], outputs=output)
     return model
     
-def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, output_dir="outputs/base"):
+def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, output_dir="outputs/raw"):
     """
     Evaluate binary classification metrics from softmax probability outputs using Youden's J threshold.
     Also saves FAR/FRR vs threshold plot and logs metrics.
@@ -186,13 +188,13 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
         print("⚠ Confusion matrix incomplete (only one class present)")
 
     # Print to console
-    print("🔎 Evaluation Metrics:")
-    print(f"✅ Accuracy:  {acc:.4f}")
-    print(f"✅ F1 Score:  {f1:.4f}")
-    print(f"✅ ROC AUC:   {auc:.4f}" if auc is not None else "❌ ROC AUC:   Not available")
-    print(f"✅ FAR:       {far:.4f}")
-    print(f"✅ FRR:       {frr:.4f}")
-    print(f"✅ Youden J Threshold: {youden_threshold:.4f}" if youden_threshold is not None else "❌ Youden J: Not available")
+    print("Evaluation Metrics:")
+    print(f"Accuracy:  {acc:.4f}")
+    print(f"F1 Score:  {f1:.4f}")
+    print(f"ROC AUC:   {auc:.4f}" if auc is not None else "❌ ROC AUC:   Not available")
+    print(f"FAR:       {far:.4f}")
+    print(f"FRR:       {frr:.4f}")
+    print(f"Youden J Threshold: {youden_threshold:.4f}" if youden_threshold is not None else "❌ Youden J: Not available")
 
     # FAR/FRR Curve Visualization
     if len(np.unique(y_true)) == 2:
@@ -244,9 +246,6 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
 BATCH_SIZE = 128
 EPOCHS = 5
 IMG_SHAPE = (155, 220, 1)  
-os.makedirs(weights_dir, exist_ok=True)
-os.makedirs(metrics_dir, exist_ok=True)
-
 datasets = {
     "CEDAR": {
         "path": "Dataset/CEDAR",
@@ -278,6 +277,8 @@ if not os.path.exists(results_csv_path):
 results = []
 
 for dataset_name, config in datasets.items():
+    K.clear_session()
+    gc.collect()
     print(f"\n📦 Processing Siamese Model for Dataset: {dataset_name}")
 
     # Load and generate all training pairs
@@ -319,11 +320,46 @@ for dataset_name, config in datasets.items():
     )
 
     # ========== Save the model ==========
-    run_id = 1
-    model_save_path = f"models/{dataset_name}_run{run_id}_siamese_model.h5"
-    os.makedirs("models", exist_ok=True)
+    model_dir = "models"
+    os.makedirs(model_dir, exist_ok=True)
+
+    # Dynamically determine the run_id based on existing files
+    existing_files = [f for f in os.listdir(model_dir) if f.startswith(f"{dataset_name}_run") and f.endswith("_siamese_model.h5")]
+    run_id = len(existing_files) + 1  # Increment based on existing files
+
+    model_save_path = f"{model_dir}/{dataset_name}_run{run_id}_siamese_model.h5"
     model.save(model_save_path)
     print(f"💾 Model saved to: {model_save_path}")
 
     train_time = time.time() - start_time
     print(f"⏱ Training completed in {train_time:.2f} seconds")
+
+    # ========== Evaluate on test set ==========
+    print(f"🔍 Evaluating on Test Set for {dataset_name}")
+    test_pairs, test_labels = generator.generate_pairs(split='test', use_raw=True)
+    test_img1 = np.array([pair[0] for pair in test_pairs])
+    test_img2 = np.array([pair[1] for pair in test_pairs])
+    test_labels = np.array(test_labels)
+
+    print("Label Distribution:", dict(zip(*np.unique(test_labels, return_counts=True))))
+    if len(np.unique(test_labels)) < 2:
+        print("⚠ Skipping evaluation — only one class present.")
+    else:
+        y_pred_probs = model.predict([test_img1, test_img2], batch_size=128)
+        metrics = evaluate_classification_metrics(test_labels, y_pred_probs, dataset_name=dataset_name)
+        results.append((dataset_name, metrics))
+        print(f"✅ Evaluation Complete for {dataset_name}")
+
+        # Append results to the CSV file
+        with open(results_csv_path, "a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                dataset_name,
+                metrics["accuracy"],
+                metrics["f1_score"],
+                metrics["roc_auc"],
+                metrics["far"],
+                metrics["frr"],
+                metrics["youden_threshold"],
+            ])
+        print(f"✅ Results saved for {dataset_name}")

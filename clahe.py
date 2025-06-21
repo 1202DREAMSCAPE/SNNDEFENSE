@@ -94,7 +94,7 @@ def build_siamese_network(input_shape):
     model = Model(inputs=[input_a, input_b], outputs=output)
     return model
     
-def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, output_dir="outputs/sop2", threshold=0.5):
+def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, output_dir="outputs/visualizations_clahe", threshold=0.5):
     """
     Evaluate binary classification metrics from softmax probability outputs.
     Saves metrics to a .txt file if dataset_name is provided.
@@ -106,17 +106,13 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
     acc = accuracy_score(y_true, y_pred)
     f1 = f1_score(y_true, y_pred, zero_division=0)
 
-    # ROC AUC and EER
+    # ROC AUC
     if len(np.unique(y_true)) == 2:
         auc = roc_auc_score(y_true, y_pred_probs[:, 1])
         fpr, tpr, thresholds = roc_curve(y_true, y_pred_probs[:, 1])
-        fnr = 1 - tpr
-        eer_idx = np.nanargmin(np.abs(fnr - fpr))
-        eer = fpr[eer_idx]
-        eer_threshold = thresholds[eer_idx]
     else:
-        auc = eer = eer_threshold = None
-        print("⚠ ROC AUC and EER not computed (only one class in y_true)")
+        auc = None
+        print("⚠ ROC AUC not computed (only one class in y_true)")
 
     # Confusion matrix and derived metrics
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
@@ -129,13 +125,12 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
         print("⚠ Confusion matrix incomplete (only one class present)")
 
     # Print to console
-    print("🔎 Evaluation Metrics:")
-    print(f"✅ Accuracy:  {acc:.4f}")
-    print(f"✅ F1 Score:  {f1:.4f}")
-    print(f"✅ ROC AUC:   {auc:.4f}" if auc is not None else "❌ ROC AUC:   Not available")
-    print(f"✅ FAR:       {far:.4f}")
-    print(f"✅ FRR:       {frr:.4f}")
-    print(f"✅ EER:       {eer:.4f} at threshold {eer_threshold:.4f}" if eer is not None else "❌ EER:       Not available")
+    print("Evaluation Metrics:")
+    print(f"Accuracy:  {acc:.4f}")
+    print(f"F1 Score:  {f1:.4f}")
+    print(f"ROC AUC:   {auc:.4f}" if auc is not None else "❌ ROC AUC:   Not available")
+    print(f"FAR:       {far:.4f}")
+    print(f"FRR:       {frr:.4f}")
 
     # Save to file if dataset name is provided
     if dataset_name:
@@ -149,10 +144,6 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
             f.write(f"ROC AUC        : {auc:.4f}\n" if auc is not None else "ROC AUC        : Not available\n")
             f.write(f"FAR (FP Rate)  : {far:.4f}\n")
             f.write(f"FRR (FN Rate)  : {frr:.4f}\n")
-            if eer is not None:
-                f.write(f"EER            : {eer:.4f} at threshold {eer_threshold:.4f}\n")
-            else:
-                f.write(f"EER            : Not available\n")
         print(f"📝 Metrics saved to {filepath}")
 
     return {
@@ -160,18 +151,11 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
         "f1_score": f1,
         "roc_auc": auc,
         "far": far,
-        "frr": frr,
-        "eer": eer,
-        "eer_threshold": eer_threshold
+        "frr": frr
     }
 
-def minmax_normalize(img):
-    flat = img.flatten().reshape(-1, 1)
-    scaled = MinMaxScaler().fit_transform(flat)
-    return scaled.reshape(img.shape)
-
 def plot_image_comparison(original, normalized, filename, dataset_name):
-    output_dir = os.path.join("sop1_outputs", dataset_name)
+    output_dir = os.path.join("outputs/visualizations_clahe", dataset_name)
     os.makedirs(output_dir, exist_ok=True)
 
     # Create side-by-side comparison plot
@@ -208,7 +192,7 @@ def generate_sop1_outputs(generator, save_path="outputs/visualizations_clahe"):
 
             for fname in img_files:
                 img_path = os.path.join(img_dir, fname)
-                original = generator.preprocess_image(img_path)  # Original preprocessing
+                original = generator.preprocess_image_raw(img_path)  # Original preprocessing
                 clahe_img = generator.preprocess_image_clahe(img_path)  # CLAHE preprocessing
 
                 # Only visualize selected images
@@ -222,10 +206,6 @@ def generate_sop1_outputs(generator, save_path="outputs/visualizations_clahe"):
 BATCH_SIZE = 128
 EPOCHS = 5
 IMG_SHAPE = (155, 220, 1)  
-weights_dir = 'base_weights_softmax'
-metrics_dir = 'baseline_metrics_softmax'
-os.makedirs(weights_dir, exist_ok=True)
-os.makedirs(metrics_dir, exist_ok=True)
 
 datasets = {
     "CEDAR": {
@@ -244,6 +224,15 @@ datasets = {
          "test_writers": list(range(191, 260))
      }
 }
+os.makedirs("outputs/visualizations_clahe", exist_ok=True)
+# Define the path for the results CSV file
+results_csv_path = "outputs/visualizations_clahe/CLAHE_results.csv"
+
+# Ensure the CSV file has a header if it doesn't exist
+if not os.path.exists(results_csv_path):
+    with open(results_csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Dataset", "Accuracy", "F1 Score", "ROC AUC", "FAR", "FRR", "Youden Threshold"])
 
 results = []
 
@@ -280,14 +269,52 @@ for dataset_name, config in datasets.items():
         verbose=2
     )
 
-    # Save model
-    model_save_path = f"models/{dataset_name}_clahe_model.h5"
-    os.makedirs("models", exist_ok=True)
+    # ========== Save the model ==========
+    model_dir = "models"
+    os.makedirs(model_dir, exist_ok=True)
+
+    # Dynamically determine the run_id based on existing files
+    existing_files = [f for f in os.listdir(model_dir) if f.startswith(f"{dataset_name}_run") and f.endswith("_siamese_model.h5")]
+    run_id = len(existing_files) + 1  # Increment based on existing files
+
+    model_save_path = f"{model_dir}/{dataset_name}_run{run_id}_siamese_model.h5"
     model.save(model_save_path)
-    print(f"model saved to: {model_save_path}")
+    print(f"💾 Model saved to: {model_save_path}")
+
     print(f"⏱ Training completed in {time.time() - start_time:.2f} seconds")
 
     # ========== SOP 1 ==========
-    print(f"\n📊 Running SOP 1 Evaluation for {dataset_name}")
+    print(f"\n📊 Pre-processing metrics (CLAHE) for {dataset_name}")
     generate_sop1_outputs(
         generator)
+    
+    # ====================
+    print(f"\n🔍 Running real world metrics for {dataset_name}")
+
+    test_pairs, test_labels = generator.generate_pairs(split='test', use_raw=True)
+    test_img1 = np.array([pair[0] for pair in test_pairs])
+    test_img2 = np.array([pair[1] for pair in test_pairs])
+    test_labels = np.array(test_labels)
+
+    print("Label Distribution:", dict(zip(*np.unique(test_labels, return_counts=True))))
+    if len(np.unique(test_labels)) < 2:
+        print("⚠ Skipping evaluation — only one class present.")
+    else:
+        y_pred_probs = model.predict([test_img1, test_img2], batch_size=128)
+        metrics = evaluate_classification_metrics(test_labels, y_pred_probs, dataset_name=dataset_name)
+        results.append((dataset_name, metrics))
+        print(f"✅ Evaluation Complete for {dataset_name}")
+
+        # Append results to the CSV file
+        with open(results_csv_path, "a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                dataset_name,
+                metrics["accuracy"],
+                metrics["f1_score"],
+                metrics["roc_auc"],
+                metrics["far"],
+                metrics["frr"],
+                metrics["youden_threshold"],
+            ])
+        print(f"✅ Results saved for {dataset_name}")

@@ -186,13 +186,13 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
         print("⚠ Confusion matrix incomplete (only one class present)")
 
     # Print to console
-    print("🔎 Evaluation Metrics:")
-    print(f"✅ Accuracy:  {acc:.4f}")
-    print(f"✅ F1 Score:  {f1:.4f}")
-    print(f"✅ ROC AUC:   {auc:.4f}" if auc is not None else "❌ ROC AUC:   Not available")
-    print(f"✅ FAR:       {far:.4f}")
-    print(f"✅ FRR:       {frr:.4f}")
-    print(f"✅ Youden J Threshold: {youden_threshold:.4f}" if youden_threshold is not None else "❌ Youden J: Not available")
+    print("Evaluation Metrics:")
+    print(f"Accuracy:  {acc:.4f}")
+    print(f"F1 Score:  {f1:.4f}")
+    print(f"ROC AUC:   {auc:.4f}" if auc is not None else "❌ ROC AUC:   Not available")
+    print(f"FAR:       {far:.4f}")
+    print(f"FRR:       {frr:.4f}")
+    print(f"Youden J Threshold: {youden_threshold:.4f}" if youden_threshold is not None else "❌ Youden J: Not available")
 
     # FAR/FRR Curve Visualization
     if len(np.unique(y_true)) == 2:
@@ -278,8 +278,8 @@ def generate_sop1_outputs(generator, save_path="outputs/preprocessing"):
 
             for fname in img_files:
                 img_path = os.path.join(img_dir, fname)
-                original = generator.preprocess_image(img_path)  # Original preprocessing
-                normalized = generator.preprocess_image_minmax(img_path)  # MinMax normalization preprocessing
+                original = generator.preprocess_image_raw(img_path)  # Original preprocessing
+                normalized = generator.preprocess_image(img_path)  # MinMax normalization preprocessing
 
                 # Visualize only selected samples
                 if fname in visualize_set:
@@ -427,9 +427,14 @@ for dataset_name, config in datasets.items():
     )
 
     # ========== Save the model ==========
-    run_id = 1
-    model_save_path = f"models/{dataset_name}_run{run_id}_siamese_model.h5"
-    os.makedirs("models", exist_ok=True)
+    model_dir = "models"
+    os.makedirs(model_dir, exist_ok=True)
+
+    # Dynamically determine the run_id based on existing files
+    existing_files = [f for f in os.listdir(model_dir) if f.startswith(f"{dataset_name}_run") and f.endswith("_siamese_model.h5")]
+    run_id = len(existing_files) + 1  # Increment based on existing files
+
+    model_save_path = f"{model_dir}/{dataset_name}_run{run_id}_siamese_model.h5"
     model.save(model_save_path)
     print(f"💾 Model saved to: {model_save_path}")
 
@@ -437,7 +442,7 @@ for dataset_name, config in datasets.items():
     print(f"⏱ Training completed in {train_time:.2f} seconds")
 
     # ========== SOP 1 ==========
-    print(f"\n📊 Pre-processing metrics for {dataset_name}")
+    print(f"\n📊 Pre-processing metrics (MinMax) for {dataset_name}")
     generate_sop1_outputs(
         generator
     )

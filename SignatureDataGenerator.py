@@ -366,7 +366,11 @@ class SignatureDataGenerator:
                 if return_metadata:
                     meta.append((anchor_fn, fn2, f"{writer}_vs_{w2}"))
 
-        # print(f"✅ Generated {len(pairs)} pairs ({labels.count(1)} genuine, {labels.count(0)} forged})")
+        combined = list(zip(pairs, labels))
+        random.shuffle(combined)
+        pairs, labels = zip(*combined)
+        pairs = list(pairs)
+        labels = list(labels)
 
         if return_metadata:
             return pairs, labels, meta
@@ -430,6 +434,8 @@ class SignatureDataGenerator:
             # else:
             #     print(f"⚠ Writer {writer} has no valid triplets.")
 
+        random.shuffle(triplets)
+        
         def generator():
             for anchor, positive, negative in triplets:
                 yield (anchor, positive, negative), 0.0  # dummy label
