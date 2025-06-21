@@ -350,10 +350,6 @@ def compute_distance_distributions(model, generator, dataset_name, base_output_d
 BATCH_SIZE = 128
 EPOCHS = 5
 IMG_SHAPE = (155, 220, 1)  
-weights_dir = 'base_weights_softmax'
-metrics_dir = 'baseline_metrics_softmax'
-os.makedirs(weights_dir, exist_ok=True)
-os.makedirs(metrics_dir, exist_ok=True)
 
 datasets = {
     "CEDAR": {

@@ -210,21 +210,28 @@ def compute_distance_distributions(model, generator, dataset_name, base_output_d
 
     print(f"📊 Distance Distribution Outputs saved to {output_dir}")
 
-def compute_edge_count(image):
-    edges = cv2.Canny((image * 255).astype(np.uint8), 50, 150)
-    return np.sum(edges > 0)
+def plot_image_comparison(original, normalized, filename, dataset_name):
+    output_dir = os.path.join("outputs/visualizations_clahe", dataset_name)
+    os.makedirs(output_dir, exist_ok=True)
 
-def generate_enhanced_outputs(generator, 
-                              save_path="outputs/enhanced_edge_count_summary.csv", 
-                              avg_path="outputs/enhanced_edge_count_averages.csv",
-                              max_visualizations=2):
+    # Create side-by-side comparison plot
+    fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+    axes[0].imshow(original, cmap='gray')
+    axes[0].set_title("Original")
+    axes[0].axis("off")
 
-    def apply_clahe(img):
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        return clahe.apply(img)
+    axes[1].imshow(normalized, cmap='gray')
+    axes[1].set_title("CLAHE")
+    axes[1].axis("off")
 
-    rows = [["Writer", "Image", "Original_EdgeCount", "CLAHE_EdgeCount", "PSNR"]]
-    edge_stats = defaultdict(lambda: {"original": [], "clahe": [], "psnr": []})
+    plt.tight_layout()
+    
+    # Save image to the correct dataset-specific path
+    plt.savefig(os.path.join(output_dir, f"{filename}_comparison_enhanced.png"))
+    plt.close()
+
+def generate_sop1_outputs(generator, save_path="outputs/enhanced"):
+    max_visualizations = 5
 
     for dataset_path, writer in generator.test_writers:
         for label_type in ["genuine", "forged"]:
@@ -241,47 +248,15 @@ def generate_enhanced_outputs(generator,
 
             for fname in img_files:
                 img_path = os.path.join(img_dir, fname)
-                original = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
-                if original is None:
-                    continue
+                original = generator.preprocess_image(img_path)  # Original preprocessing
+                clahe_img = generator.preprocess_image_clahe(img_path)  # CLAHE preprocessing
 
-                resized = cv2.resize(original, (220, 155))
-                clahe_img = apply_clahe(resized)
-
-                # Only visualize some images
+                # Only visualize selected images
                 if fname in visualize_set:
                     filename = f"writer{writer}_{label_type}_{os.path.splitext(fname)[0]}"
-                    plot_image_comparison(resized, clahe_img, filename + "_enhanced", dataset_name)
+                    plot_image_comparison(original.squeeze(), clahe_img.squeeze(), filename + "_clahe", generator.dataset_name)
 
-                # Compute metrics
-                edge_orig = compute_edge_count(resized)
-                edge_clahe = compute_edge_count(clahe_img)
-                psnr_value = compare_psnr(resized.astype(np.float32), clahe_img.astype(np.float32), data_range=255)
-
-                rows.append([f"writer_{writer}", fname, edge_orig, edge_clahe, round(psnr_value, 2)])
-                edge_stats[f"writer_{writer}"]["original"].append(edge_orig)
-                edge_stats[f"writer_{writer}"]["clahe"].append(edge_clahe)
-                edge_stats[f"writer_{writer}"]["psnr"].append(psnr_value)
-
-    # Save full image-level CSV
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    with open(save_path, "w", newline="") as f:
-        csv_writer = csv.writer(f)
-        csv_writer.writerows(rows)
-    print(f"\n✅ Enhanced edge count + PSNR summary saved to {save_path}")
-
-    # Save average CSV
-    avg_rows = [["Writer", "Avg_Original_EdgeCount", "Avg_CLAHE_EdgeCount", "Avg_PSNR"]]
-    for writer_id, stats in edge_stats.items():
-        avg_orig = np.mean(stats["original"])
-        avg_clahe = np.mean(stats["clahe"])
-        avg_psnr = np.mean(stats["psnr"])
-        avg_rows.append([writer_id, round(avg_orig, 2), round(avg_clahe, 2), round(avg_psnr, 2)])
-
-    with open(avg_path, "w", newline="") as f:
-        csv_writer = csv.writer(f)
-        csv_writer.writerows(avg_rows)
-    print(f"📊 Per-writer average enhanced edge counts + PSNR saved to {avg_path}")
+    print(f"\n✅ visualizations generated and saved to {save_path}")
 
 
 # Parameters
@@ -379,8 +354,5 @@ for dataset_name, config in datasets.items():
         metrics = evaluate_classification_metrics(test_labels, distances, dataset_name=dataset_name)
         results.append((dataset_name, metrics))
         compute_distance_distributions(model, generator, dataset_name)
-        generate_enhanced_outputs(generator, 
-                                  save_path=f"{metrics_dir}/{dataset_name}_edge_count_summary.csv", 
-                                  avg_path=f"{metrics_dir}/{dataset_name}_edge_count_averages.csv",
-                                  max_visualizations=2)
+        generate_sop1_outputs(generator, save_path=metrics_dir)
         print(f"✅ Evaluation Complete for {dataset_name}")

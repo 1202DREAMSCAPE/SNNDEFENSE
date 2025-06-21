@@ -95,6 +95,63 @@ def build_triplet_network(input_shape):
     model = Model(inputs=[anchor_input, positive_input, negative_input], outputs=merged_output)
     return model
 
+def evaluate_classification_metrics(y_true, distances, dataset_name=None, output_dir="outputs/tripletloss"):
+    """
+    Evaluate binary classification metrics using F1-optimal threshold.
+    """
+    # Normalize distances to similarity scores
+    scores = 1 - distances / np.max(distances)
+
+    # --- F1-Optimal Threshold selection ---
+    best_threshold = 0.5
+    best_f1 = 0.0
+    thresholds = np.linspace(0, 1, 200)
+
+    for thresh in thresholds:
+        y_pred_temp = (scores >= thresh).astype(int)
+        f1 = f1_score(y_true, y_pred_temp, zero_division=0)
+        if f1 > best_f1:
+            best_f1 = f1
+            best_threshold = thresh
+
+    f1_threshold = best_threshold
+    y_pred = (scores >= f1_threshold).astype(int)
+    print(f"📌 Optimal F1 Threshold: {f1_threshold:.4f}")
+
+    # Confusion matrix
+    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
+    tn, fp, fn, tp = cm.ravel() if cm.shape == (2, 2) else (0, 0, 0, 0)
+
+    # Metrics
+    acc = accuracy_score(y_true, y_pred)
+    far = fp / (fp + tn + 1e-6)
+    frr = fn / (fn + tp + 1e-6)
+    tpr = tp / (tp + fn + 1e-6)
+    tnr = tn / (tn + fp + 1e-6)
+
+    # Save metrics
+    if dataset_name:
+        os.makedirs(output_dir, exist_ok=True)
+        filepath = os.path.join(output_dir, f"{dataset_name}_metrics.txt")
+        with open(filepath, "w") as f:
+            f.write(f"Evaluation Metrics for {dataset_name}\n")
+            f.write("="*40 + "\n")
+            f.write(f"Accuracy       : {acc:.4f}\n")
+            f.write(f"FAR (FP Rate)  : {far:.4f}\n")
+            f.write(f"FRR (FN Rate)  : {frr:.4f}\n")
+            f.write(f"TPR (Sensitivity): {tpr:.4f}\n")
+            f.write(f"TNR (Specificity): {tnr:.4f}\n")
+        print(f"📝 Metrics saved to {filepath}")
+
+    return {
+        "accuracy": acc,
+        "far": far,
+        "frr": frr,
+        "tpr": tpr,
+        "tnr": tnr
+    }
+
+
 def compute_distance_distributions(
     weights_path, generator, dataset_name,
     base_output_dir="outputs/tripletloss", max_samples=5000,
@@ -251,6 +308,8 @@ for dataset_name, config in datasets.items():
         print(f"y_pred_probs: {y_pred_probs}")
         print(f"y_true: {test_labels}")
 
+        metrics = evaluate_classification_metrics(test_labels, distances, dataset_name=dataset_name)
+        results.append((dataset_name, metrics))
         # def calling
         compute_distance_distributions(
             weights_path=triplet_weights_path,

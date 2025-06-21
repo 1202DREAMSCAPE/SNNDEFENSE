@@ -273,11 +273,10 @@ for dataset_name, config in datasets.items():
     model_dir = "models"
     os.makedirs(model_dir, exist_ok=True)
 
-    # Dynamically determine the run_id based on existing files
     existing_files = [f for f in os.listdir(model_dir) if f.startswith(f"{dataset_name}_run") and f.endswith("_siamese_model.h5")]
     run_id = len(existing_files) + 1  # Increment based on existing files
 
-    model_save_path = f"{model_dir}/{dataset_name}_run{run_id}_siamese_model.h5"
+    model_save_path = f"{model_dir}/{dataset_name}_run{run_id}_claheonly_model.h5"
     model.save(model_save_path)
     print(f"💾 Model saved to: {model_save_path}")
 
@@ -315,6 +314,5 @@ for dataset_name, config in datasets.items():
                 metrics["roc_auc"],
                 metrics["far"],
                 metrics["frr"],
-                metrics["youden_threshold"],
             ])
         print(f"✅ Results saved for {dataset_name}")
