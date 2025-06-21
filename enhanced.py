@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 from tensorflow.keras.optimizers import Adam
 from SignatureDataGenerator import SignatureDataGenerator
 from collections import Counter
+import seaborn as sns
+import umap
 
 np.random.seed(1337)
 random.seed(1337)
@@ -148,12 +150,146 @@ def evaluate_classification_metrics(y_true, distances, dataset_name=None, output
         "tnr": tnr
     }
 
+def compute_distance_distributions(model, generator, dataset_name, base_output_dir="outputs/enhanced", max_samples=5000):
+    """
+    Compute and visualize distance distributions and UMAP embeddings for enhanced.py.
+    """
+    output_dir = os.path.join(base_output_dir, dataset_name)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Step 1: Get unbatched test data
+    X_test, y_test = generator.get_unbatched_data()
+    X_test = np.array(X_test)
+    y_test = np.array(y_test)
+
+    # Step 2: Extract embeddings from base model
+    base_model = model.get_layer("base_network")
+    embeddings = base_model.predict(X_test, batch_size=128, verbose=0)
+
+    # Step 3: Compute distances
+    intra_dists, inter_dists, seen = [], [], 0
+    for i in range(len(embeddings)):
+        for j in range(i + 1, len(embeddings)):
+            if seen >= max_samples:
+                break
+            dist = np.linalg.norm(embeddings[i] - embeddings[j])
+            if y_test[i] == y_test[j]:
+                intra_dists.append(dist)
+            else:
+                inter_dists.append(dist)
+            seen += 1
+
+    # Step 4: Histogram plot
+    plt.figure(figsize=(8, 5))
+    sns.histplot(intra_dists, label='Genuine-Genuine', color='blue', kde=True, stat="density", bins=50)
+    sns.histplot(inter_dists, label='Genuine-Forged', color='red', kde=True, stat="density", bins=50)
+    plt.title(f'Distance Distribution - {dataset_name}')
+    plt.xlabel('Euclidean Distance')
+    plt.ylabel('Density')
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "distance_distribution.png"))
+    plt.close()
+
+    # Step 5: UMAP visualization
+    reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, metric='euclidean')
+    embedding_2d = reducer.fit_transform(embeddings)
+    plt.figure(figsize=(8, 6))
+    scatter = plt.scatter(embedding_2d[:, 0], embedding_2d[:, 1], c=y_test, cmap='tab20', s=10)
+    plt.colorbar(scatter, label="Writer ID")
+    plt.title(f'UMAP of Embeddings - {dataset_name}')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "umap.png"))
+    plt.close()
+
+    # Step 6: Save stats
+    stats_path = os.path.join(output_dir, "distance_stats.txt")
+    with open(stats_path, "w") as f:
+        f.write(f"Intra-class: mean={np.mean(intra_dists):.4f}, std={np.std(intra_dists):.4f}\n")
+        f.write(f"Inter-class: mean={np.mean(inter_dists):.4f}, std={np.std(inter_dists):.4f}\n")
+
+    print(f"📊 Distance Distribution Outputs saved to {output_dir}")
+
+def compute_edge_count(image):
+    edges = cv2.Canny((image * 255).astype(np.uint8), 50, 150)
+    return np.sum(edges > 0)
+
+def generate_enhanced_outputs(generator, 
+                              save_path="outputs/enhanced_edge_count_summary.csv", 
+                              avg_path="outputs/enhanced_edge_count_averages.csv",
+                              max_visualizations=2):
+
+    def apply_clahe(img):
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        return clahe.apply(img)
+
+    rows = [["Writer", "Image", "Original_EdgeCount", "CLAHE_EdgeCount", "PSNR"]]
+    edge_stats = defaultdict(lambda: {"original": [], "clahe": [], "psnr": []})
+
+    for dataset_path, writer in generator.test_writers:
+        for label_type in ["genuine", "forged"]:
+            img_dir = os.path.join(dataset_path, f"writer_{writer:03d}", label_type)
+            if not os.path.exists(img_dir):
+                continue
+
+            img_files = [f for f in os.listdir(img_dir) if f.lower().endswith((".jpg", ".png")) and not f.startswith(".")]
+            if len(img_files) < 1:
+                continue
+
+            # Visualize only a few
+            visualize_set = set(random.sample(img_files, min(max_visualizations, len(img_files))))
+
+            for fname in img_files:
+                img_path = os.path.join(img_dir, fname)
+                original = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+                if original is None:
+                    continue
+
+                resized = cv2.resize(original, (220, 155))
+                clahe_img = apply_clahe(resized)
+
+                # Only visualize some images
+                if fname in visualize_set:
+                    filename = f"writer{writer}_{label_type}_{os.path.splitext(fname)[0]}"
+                    plot_image_comparison(resized, clahe_img, filename + "_enhanced", dataset_name)
+
+                # Compute metrics
+                edge_orig = compute_edge_count(resized)
+                edge_clahe = compute_edge_count(clahe_img)
+                psnr_value = compare_psnr(resized.astype(np.float32), clahe_img.astype(np.float32), data_range=255)
+
+                rows.append([f"writer_{writer}", fname, edge_orig, edge_clahe, round(psnr_value, 2)])
+                edge_stats[f"writer_{writer}"]["original"].append(edge_orig)
+                edge_stats[f"writer_{writer}"]["clahe"].append(edge_clahe)
+                edge_stats[f"writer_{writer}"]["psnr"].append(psnr_value)
+
+    # Save full image-level CSV
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    with open(save_path, "w", newline="") as f:
+        csv_writer = csv.writer(f)
+        csv_writer.writerows(rows)
+    print(f"\n✅ Enhanced edge count + PSNR summary saved to {save_path}")
+
+    # Save average CSV
+    avg_rows = [["Writer", "Avg_Original_EdgeCount", "Avg_CLAHE_EdgeCount", "Avg_PSNR"]]
+    for writer_id, stats in edge_stats.items():
+        avg_orig = np.mean(stats["original"])
+        avg_clahe = np.mean(stats["clahe"])
+        avg_psnr = np.mean(stats["psnr"])
+        avg_rows.append([writer_id, round(avg_orig, 2), round(avg_clahe, 2), round(avg_psnr, 2)])
+
+    with open(avg_path, "w", newline="") as f:
+        csv_writer = csv.writer(f)
+        csv_writer.writerows(avg_rows)
+    print(f"📊 Per-writer average enhanced edge counts + PSNR saved to {avg_path}")
+
+
 # Parameters
 BATCH_SIZE = 128
 EPOCHS = 5
 IMG_SHAPE = (155, 220, 1)  
 weights_dir = 'enhanced_weights'
-metrics_dir = 'enhanced_metrics'
+metrics_dir = 'outputs/enhanced'
 os.makedirs(weights_dir, exist_ok=True)
 os.makedirs(metrics_dir, exist_ok=True)
 
@@ -242,4 +378,9 @@ for dataset_name, config in datasets.items():
         distances = np.linalg.norm(emb1 - emb2, axis=1)
         metrics = evaluate_classification_metrics(test_labels, distances, dataset_name=dataset_name)
         results.append((dataset_name, metrics))
+        compute_distance_distributions(model, generator, dataset_name)
+        generate_enhanced_outputs(generator, 
+                                  save_path=f"{metrics_dir}/{dataset_name}_edge_count_summary.csv", 
+                                  avg_path=f"{metrics_dir}/{dataset_name}_edge_count_averages.csv",
+                                  max_visualizations=2)
         print(f"✅ Evaluation Complete for {dataset_name}")

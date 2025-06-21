@@ -28,8 +28,9 @@ from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from collections import defaultdict, Counter
 from skimage.metrics import peak_signal_noise_ratio as compare_psnr
+from tensorflow.keras import mixed_precision
 
-
+mixed_precision.set_global_policy("mixed_float16")
 np.random.seed(1337)
 random.seed(1337)
 tf.random.set_seed(1337)
@@ -239,13 +240,8 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
         "youden_threshold": youden_threshold
     }
 
-def minmax_normalize(img):
-    flat = img.flatten().reshape(-1, 1)
-    scaled = MinMaxScaler().fit_transform(flat)
-    return scaled.reshape(img.shape)
-
 def plot_image_comparison(original, normalized, filename, dataset_name):
-    output_dir = os.path.join("sop1_outputs", dataset_name)
+    output_dir = os.path.join("preprocess_outputs", dataset_name)
     os.makedirs(output_dir, exist_ok=True)
 
     # Create side-by-side comparison plot
@@ -264,16 +260,8 @@ def plot_image_comparison(original, normalized, filename, dataset_name):
     plt.savefig(os.path.join(output_dir, f"{filename}_comparison.png"))
     plt.close()
 
-def compute_edge_count(image):
-    edges = cv2.Canny((image * 255).astype(np.uint8), 50, 150)
-    return np.sum(edges > 0)
-
-def generate_sop1_outputs(generator, 
-                          save_path="outputs/edge_count_summary.csv", 
-                          avg_path="outputs/edge_count_averages.csv"):
+def generate_sop1_outputs(generator, save_path="outputs/preprocessing"):
     max_visualizations = 5
-    rows = [["Writer", "Image", "Original_EdgeCount", "MinMax_EdgeCount", "PSNR"]]
-    edge_stats = defaultdict(lambda: {"original": [], "normalized": [], "psnr": []})
 
     for dataset_path, writer in generator.test_writers:
         for label_type in ["genuine", "forged"]:
@@ -290,49 +278,15 @@ def generate_sop1_outputs(generator,
 
             for fname in img_files:
                 img_path = os.path.join(img_dir, fname)
-                original = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
-                if original is None:
-                    continue
-
-                resized = cv2.resize(original, (220, 155))
-                normalized = minmax_normalize(resized)
+                original = generator.preprocess_image(img_path)  # Original preprocessing
+                normalized = generator.preprocess_image_minmax(img_path)  # MinMax normalization preprocessing
 
                 # Visualize only selected samples
                 if fname in visualize_set:
                     filename = f"writer{writer}_{label_type}_{os.path.splitext(fname)[0]}"
-                    plot_image_comparison(resized, normalized, filename + "_minmax", dataset_name)
+                    plot_image_comparison(original.squeeze(), normalized.squeeze(), filename + "_minmax", generator.dataset_name)
 
-                # Edge Count Calculation
-                edge_orig = compute_edge_count(resized)
-                edge_norm = compute_edge_count(normalized)
-
-                # PSNR Calculation
-                psnr_value = compare_psnr(resized.astype(np.float32), (normalized * 255).astype(np.float32), data_range=255)
-
-                rows.append([f"writer_{writer}", fname, edge_orig, edge_norm, round(psnr_value, 2)])
-                edge_stats[f"writer_{writer}"]["original"].append(edge_orig)
-                edge_stats[f"writer_{writer}"]["normalized"].append(edge_norm)
-                edge_stats[f"writer_{writer}"]["psnr"].append(psnr_value)
-
-    # Save full image-level summary
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    with open(save_path, "w", newline="") as f:
-        csv_writer = csv.writer(f)
-        csv_writer.writerows(rows)
-    print(f"\n✅ MinMax edge count + PSNR summary saved to {save_path}")
-
-    # Save per-writer averages
-    avg_rows = [["Writer", "Avg_Original_EdgeCount", "Avg_MinMax_EdgeCount", "Avg_PSNR"]]
-    for writer_id, stats in edge_stats.items():
-        avg_orig = np.mean(stats["original"])
-        avg_norm = np.mean(stats["normalized"])
-        avg_psnr = np.mean(stats["psnr"])
-        avg_rows.append([writer_id, round(avg_orig, 2), round(avg_norm, 2), round(avg_psnr, 2)])
-
-    with open(avg_path, "w", newline="") as f:
-        csv_writer = csv.writer(f)
-        csv_writer.writerows(avg_rows)
-    print(f"📊 Per-writer average MinMax edge counts + PSNR saved to {avg_path}")
+    print(f"\n✅ Visualizations generated and saved to {save_path}")
 
 def compute_distance_distributions(model, generator, dataset_name, base_output_dir="outputs/base", max_samples=5000):
     output_dir = os.path.join(base_output_dir, dataset_name)
@@ -419,6 +373,16 @@ datasets = {
      }
 }
 
+os.makedirs("outputs/base", exist_ok=True)
+# Define the path for the results CSV file
+results_csv_path = "outputs/base/results.csv"
+
+# Ensure the CSV file has a header if it doesn't exist
+if not os.path.exists(results_csv_path):
+    with open(results_csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Dataset", "Accuracy", "F1 Score", "ROC AUC", "FAR", "FRR", "Youden Threshold"])
+
 results = []
 
 for dataset_name, config in datasets.items():
@@ -431,7 +395,7 @@ for dataset_name, config in datasets.items():
         img_width=IMG_SHAPE[1],
         batch_sz=BATCH_SIZE,
     )
-    pairs, labels = generator.generate_pairs()
+    pairs, labels = generator.generate_pairs(use_raw=False)
     labels = np.array(labels).astype(np.int32)
 
     # Shuffle pairs
@@ -463,7 +427,8 @@ for dataset_name, config in datasets.items():
     )
 
     # ========== Save the model ==========
-    model_save_path = f"models/{dataset_name}_siamese_model.h5"
+    run_id = 1
+    model_save_path = f"models/{dataset_name}_run{run_id}_siamese_model.h5"
     os.makedirs("models", exist_ok=True)
     model.save(model_save_path)
     print(f"💾 Model saved to: {model_save_path}")
@@ -472,14 +437,12 @@ for dataset_name, config in datasets.items():
     print(f"⏱ Training completed in {train_time:.2f} seconds")
 
     # ========== SOP 1 ==========
-    print(f"\n📊 Running pre-processing for {dataset_name}")
+    print(f"\n📊 Pre-processing metrics for {dataset_name}")
     generate_sop1_outputs(
-        generator,
-        save_path=f"outputs/preprocess/{dataset_name}_edge_count_summary.csv",
-        avg_path=f"outputs/preprocess/{dataset_name}_edge_count_averages.csv"
+        generator
     )
 
-    # ========== distance distrib and far/frr for real world ==========
+    # ========== Distance Distribution and FAR/FRR ==========
     print(f"\n🔍 Running real world metrics for {dataset_name}")
 
     test_pairs, test_labels = generator.generate_pairs(split='test', use_raw=True)
@@ -496,3 +459,17 @@ for dataset_name, config in datasets.items():
         compute_distance_distributions(model, generator, dataset_name)
         results.append((dataset_name, metrics))
         print(f"✅ Evaluation Complete for {dataset_name}")
+
+        # Append results to the CSV file
+        with open(results_csv_path, "a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                dataset_name,
+                metrics["accuracy"],
+                metrics["f1_score"],
+                metrics["roc_auc"],
+                metrics["far"],
+                metrics["frr"],
+                metrics["youden_threshold"],
+            ])
+        print(f"✅ Results saved for {dataset_name}")
