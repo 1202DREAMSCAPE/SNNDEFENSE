@@ -96,7 +96,7 @@ def build_siamese_network(input_shape):
     model = Model(inputs=[input_a, input_b], outputs=output)
     return model
     
-def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, output_dir="outputs/sop2"):
+def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, output_dir="outputs/base"):
     """
     Evaluate binary classification metrics from softmax probability outputs using Youden's J threshold.
     Also saves FAR/FRR vs threshold plot and logs metrics.
@@ -162,17 +162,13 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
 
         # Use Youden's threshold for binary classification
         y_pred = (scores >= youden_threshold).astype(int)
-
-        # AUC, EER, FNR
         auc = roc_auc_score(y_true, scores)
         fnr = 1 - tpr
-        eer_idx = np.nanargmin(np.abs(fnr - fpr))
-        eer = fpr[eer_idx]
-        eer_threshold = thresholds[eer_idx]
+
     else:
-        auc = eer = eer_threshold = youden_threshold = None
+        auc = youden_threshold = None
         y_pred = np.zeros_like(y_true)
-        print("⚠ ROC AUC, EER, Youden threshold not computed (only one class in y_true)")
+        print("⚠ ROC AUC, Youden threshold not computed (only one class in y_true)")
 
     # Basic metrics
     acc = accuracy_score(y_true, y_pred)
@@ -195,7 +191,6 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
     print(f"✅ ROC AUC:   {auc:.4f}" if auc is not None else "❌ ROC AUC:   Not available")
     print(f"✅ FAR:       {far:.4f}")
     print(f"✅ FRR:       {frr:.4f}")
-    print(f"✅ EER:       {eer:.4f} at threshold {eer_threshold:.4f}" if eer is not None else "❌ EER:       Not available")
     print(f"✅ Youden J Threshold: {youden_threshold:.4f}" if youden_threshold is not None else "❌ Youden J: Not available")
 
     # FAR/FRR Curve Visualization
@@ -231,10 +226,6 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
             f.write(f"ROC AUC        : {auc:.4f}\n" if auc is not None else "ROC AUC        : Not available\n")
             f.write(f"FAR (FP Rate)  : {far:.4f}\n")
             f.write(f"FRR (FN Rate)  : {frr:.4f}\n")
-            if eer is not None:
-                f.write(f"EER            : {eer:.4f} at threshold {eer_threshold:.4f}\n")
-            else:
-                f.write(f"EER            : Not available\n")
             if youden_threshold is not None:
                 f.write(f"Youden J        : {youden_threshold:.4f}\n")
         print(f"📝 Metrics saved to {filepath}")
@@ -245,8 +236,6 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
         "roc_auc": auc,
         "far": far,
         "frr": frr,
-        "eer": eer,
-        "eer_threshold": eer_threshold,
         "youden_threshold": youden_threshold
     }
 
@@ -345,7 +334,7 @@ def generate_sop1_outputs(generator,
         csv_writer.writerows(avg_rows)
     print(f"📊 Per-writer average MinMax edge counts + PSNR saved to {avg_path}")
 
-def compute_distance_distributions(model, generator, dataset_name, base_output_dir="outputs/sop2", max_samples=5000):
+def compute_distance_distributions(model, generator, dataset_name, base_output_dir="outputs/base", max_samples=5000):
     output_dir = os.path.join(base_output_dir, dataset_name)
     os.makedirs(output_dir, exist_ok=True)
 
@@ -403,47 +392,6 @@ def compute_distance_distributions(model, generator, dataset_name, base_output_d
     print(f"📊 Distance Distribution Outputs saved to {output_dir}")
 
 
-def generate_sop3_curves(history, dataset_name, base_output_dir="outputs/sop3"):
-    output_dir = os.path.join(base_output_dir, dataset_name)
-    os.makedirs(output_dir, exist_ok=True)
-
-    print("📋 History keys:", history.history.keys())
-
-    # Directly access correct keys now
-    acc = history.history['sparse_categorical_accuracy']
-    val_acc = history.history['val_sparse_categorical_accuracy']
-
-    plt.figure()
-    plt.plot(acc, label='Train Accuracy')
-    plt.plot(val_acc, label='Validation Accuracy')
-    plt.title(f"{dataset_name} - Training vs Validation Accuracy")
-    plt.xlabel('Epochs')
-    plt.ylabel('Accuracy')
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "accuracy_curve.png"))
-    plt.close()
-
-    # Loss plot
-    loss = history.history['loss']
-    val_loss = history.history['val_loss']
-
-    plt.figure()
-    plt.plot(loss, label='Train Loss')
-    plt.plot(val_loss, label='Validation Loss')
-    plt.title(f"{dataset_name} - Training vs Validation Loss")
-    plt.xlabel('Epochs')
-    plt.ylabel('Loss')
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "loss_curve.png"))
-    plt.close()
-
-    print(f"📈 Accuracy and Training Curves saved to {output_dir}")
-
-
 # Parameters
 BATCH_SIZE = 128
 EPOCHS = 5
@@ -476,7 +424,7 @@ results = []
 for dataset_name, config in datasets.items():
     print(f"\n📦 Processing Siamese Model for Dataset: {dataset_name}")
 
-    # Load and generate pairs
+    # Load and generate all training pairs
     generator = SignatureDataGenerator(
         dataset={dataset_name: config},
         img_height=IMG_SHAPE[0],
@@ -486,23 +434,16 @@ for dataset_name, config in datasets.items():
     pairs, labels = generator.generate_pairs()
     labels = np.array(labels).astype(np.int32)
 
-    # Shuffle before splitting to avoid label imbalance
+    # Shuffle pairs
     combined = list(zip(pairs, labels))
     np.random.shuffle(combined)
     pairs, labels = zip(*combined)
     pairs = list(pairs)
     labels = np.array(labels).astype(np.int32)
 
-    # Split data
-    val_split = int(0.9 * len(pairs))
-    train_pairs, val_pairs = pairs[:val_split], pairs[val_split:]
-    train_labels, val_labels = labels[:val_split], labels[val_split:]
-
     # Separate image pairs
-    train_img1 = np.array([pair[0] for pair in train_pairs])
-    train_img2 = np.array([pair[1] for pair in train_pairs])
-    val_img1 = np.array([pair[0] for pair in val_pairs])
-    val_img2 = np.array([pair[1] for pair in val_pairs])
+    img1 = np.array([pair[0] for pair in pairs])
+    img2 = np.array([pair[1] for pair in pairs])
 
     # Build model using softmax-based classification
     model = build_siamese_network(IMG_SHAPE)
@@ -515,8 +456,7 @@ for dataset_name, config in datasets.items():
     # ========== Training ==========
     start_time = time.time()
     history = model.fit(
-        [train_img1, train_img2], train_labels,
-        validation_data=([val_img1, val_img2], val_labels),
+        [img1, img2], labels,
         batch_size=BATCH_SIZE,
         epochs=EPOCHS,
         verbose=2
@@ -526,23 +466,21 @@ for dataset_name, config in datasets.items():
     model_save_path = f"models/{dataset_name}_siamese_model.h5"
     os.makedirs("models", exist_ok=True)
     model.save(model_save_path)
-    print(f"model saved to: {model_save_path}")
+    print(f"💾 Model saved to: {model_save_path}")
 
     train_time = time.time() - start_time
     print(f"⏱ Training completed in {train_time:.2f} seconds")
-    # # ========== SOP 1 ==========
-    # print(f"\n📊 Running SOP 1 Evaluation for {dataset_name}")
-    # generate_sop1_outputs(
-    #     generator,
-    #     save_path=f"outputs/sop1/{dataset_name}_edge_count_summary.csv",
-    #     avg_path=f"outputs/sop1/{dataset_name}_edge_count_averages.csv"
-    # )
-    # # ========== SOP 3 ==========
-    # print(f"\n📈 Generating SOP 3 Curves for {dataset_name}")
-    # generate_sop3_curves(history, dataset_name)
 
-    # ========== SOP 2 Evaluation (Writer-Independent) ==========
-    print(f"\n🔍 Running SOP 2 Evaluation for {dataset_name}")
+    # ========== SOP 1 ==========
+    print(f"\n📊 Running pre-processing for {dataset_name}")
+    generate_sop1_outputs(
+        generator,
+        save_path=f"outputs/preprocess/{dataset_name}_edge_count_summary.csv",
+        avg_path=f"outputs/preprocess/{dataset_name}_edge_count_averages.csv"
+    )
+
+    # ========== distance distrib and far/frr for real world ==========
+    print(f"\n🔍 Running real world metrics for {dataset_name}")
 
     test_pairs, test_labels = generator.generate_pairs(split='test', use_raw=True)
     test_img1 = np.array([pair[0] for pair in test_pairs])

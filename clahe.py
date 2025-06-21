@@ -333,44 +333,21 @@ results = []
 
 for dataset_name, config in datasets.items():
     print(f"\n📦 Processing Siamese Model for Dataset: {dataset_name}")
-
-    # Load and generate pairs
+    # Load and generate training pairs (all writers in train set)
     generator = SignatureDataGenerator(
         dataset={dataset_name: config},
         img_height=IMG_SHAPE[0],
         img_width=IMG_SHAPE[1],
         batch_sz=BATCH_SIZE,
     )
-    pairs, labels = generator.generate_pairs(use_clahe=True)
-    labels = np.array(labels).astype(np.int32)
+    train_pairs, train_labels = generator.generate_pairs(split='train')
+    train_labels = np.array(train_labels).astype(np.int32)
 
-     # Shuffle before splitting to avoid label imbalance
-    combined = list(zip(pairs, labels))
-    np.random.shuffle(combined)
-    pairs, labels = zip(*combined)
-    pairs = list(pairs)
-    labels = np.array(labels).astype(np.int32)
-
-    # Split data
-    val_split = int(0.9 * len(pairs))
-    train_pairs, val_pairs = pairs[:val_split], pairs[val_split:]
-    train_labels, val_labels = labels[:val_split], labels[val_split:]
-
-    # Separate image pairs
+    # Prepare image pair arrays
     train_img1 = np.array([pair[0] for pair in train_pairs])
     train_img2 = np.array([pair[1] for pair in train_pairs])
-    val_img1 = np.array([pair[0] for pair in val_pairs])
-    val_img2 = np.array([pair[1] for pair in val_pairs])
 
-    # Step 5: Sanity checks
-    print("Sample val labels:", val_labels[:10])
-    print("Unique val labels:", np.unique(val_labels))
-    print("Train label distribution:", Counter(train_labels))
-    print("Val label distribution:", Counter(val_labels))
-    print("Label dtype:", train_labels.dtype, val_labels.dtype)
-    print("Label shape:", train_labels.shape, val_labels.shape)
-
-    # Build model using softmax-based classification
+    # Build softmax-based Siamese model
     model = build_siamese_network(IMG_SHAPE)
     model.compile(
         optimizer=Adam(learning_rate=0.0001),
@@ -382,20 +359,18 @@ for dataset_name, config in datasets.items():
     start_time = time.time()
     history = model.fit(
         [train_img1, train_img2], train_labels,
-        validation_data=([val_img1, val_img2], val_labels),
         batch_size=BATCH_SIZE,
         epochs=EPOCHS,
         verbose=2
     )
 
-    # ========== Save the model ==========
-    model_save_path = f"models/{dataset_name}_siamese_model_clahe.h5"
+    # Save model
+    model_save_path = f"models/{dataset_name}_clahe_model.h5"
     os.makedirs("models", exist_ok=True)
     model.save(model_save_path)
     print(f"model saved to: {model_save_path}")
+    print(f"⏱ Training completed in {time.time() - start_time:.2f} seconds")
 
-    train_time = time.time() - start_time
-    print(f"⏱ Training completed in {train_time:.2f} seconds")
     # ========== SOP 1 ==========
     print(f"\n📊 Running SOP 1 Evaluation for {dataset_name}")
     generate_sop1_outputs(
