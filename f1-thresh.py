@@ -5,7 +5,7 @@ import random
 from tensorflow.keras import layers, Model, Input, Sequential
 from tensorflow.keras.utils import register_keras_serializable
 from sklearn.metrics import (
-    accuracy_score, f1_score, roc_auc_score, roc_curve, confusion_matrix
+    accuracy_score, f1_score, roc_auc_score, roc_curve, confusion_matrix, ConfusionMatrixDisplay,
 )
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -92,133 +92,98 @@ def build_siamese_network(input_shape):
     model = Model(inputs=[input_a, input_b], outputs=output)
     return model
 
-def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, output_dir="outputs/f1threshold"):
-    f1_threshold = auc = None
-    y_pred = np.zeros_like(y_true)
+def evaluate_classification_metrics(
+    y_true,
+    y_pred_probs,
+    dataset_name=None,
+    output_dir="outputs/f1threshold"
+):
+    scores = y_pred_probs[:, 1]     
+    best_f1, best_thr = 0.0, 0.0
+    thresholds = np.linspace(0, 1, 2001)
+    f1_curve = []
 
-    if len(np.unique(y_true)) == 2:
-        scores = y_pred_probs[:, 1]  # Probability of class '1' (forged)
+    for thr in thresholds:
+        preds = (scores >= thr).astype(int)
+        f1 = f1_score(y_true, preds, zero_division=0)
+        f1_curve.append(f1)
 
-        # --- F1-Optimal Threshold selection ---
-        best_f1 = 0.0
-        thresholds = np.linspace(0, 1, 200)
+        if f1 > best_f1:
+            best_f1, best_thr = f1, thr
 
-        far_values = []
-        frr_values = []
-        f1_scores = []
+    print(f"📌 Optimal F1 threshold = {best_thr:.4f}  |  Best F1 = {best_f1:.4f}")
 
-        for thresh in thresholds:
-            y_pred_temp = (scores >= thresh).astype(int)
-            f1 = f1_score(y_true, y_pred_temp, zero_division=0)
-            f1_scores.append(f1)
+    y_pred = (scores >= best_thr).astype(int)
 
-            cm = confusion_matrix(y_true, y_pred_temp, labels=[0, 1])
-            if cm.shape == (2, 2):
-                tn, fp, fn, tp = cm.ravel()
-                far = fp / (fp + tn + 1e-6)
-                frr = fn / (fn + tp + 1e-6)
-            else:
-                far = frr = 0.0
-                print(f"⚠ Confusion matrix is not 2x2 for threshold {thresh:.4f}. Skipping FAR/FRR calculation.")
+    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
+    tn, fp, fn, tp = cm.ravel()
+    far = fp / (fp + tn + 1e-6)
+    frr = fn / (fn + tp + 1e-6)
 
-            far_values.append(far)
-            frr_values.append(frr)
+    #metric calculations
+    acc  = accuracy_score(y_true, y_pred)
+    try:
+        auc  = roc_auc_score(y_true, scores)
+    except ValueError:
+        auc  = None
 
-            if f1 > best_f1:
-                best_f1 = f1
-                best_threshold = thresh
+    # ------------------------------------------------------------------
+    # Plot F1-curve and FAR / FRR bar
+    # ------------------------------------------------------------------
+    plot_dir = os.path.join(output_dir, "plots")
+    os.makedirs(plot_dir, exist_ok=True)
 
-        f1_threshold = best_threshold
-        y_pred = (scores >= f1_threshold).astype(int)
-        print(f"📌 Optimal F1 Threshold: {f1_threshold:.4f} | Best F1: {best_f1:.4f}")
+    # -- F1 vs threshold curve
+    plt.figure(figsize=(8, 5))
+    plt.plot(thresholds, f1_curve, color="darkorange")
+    plt.axvline(best_thr, color="green", ls="--",
+                label=f"Best F1 = {best_f1:.4f} @ {best_thr:.4f}")
+    plt.title("F1-score vs. Threshold")
+    plt.xlabel("Threshold")
+    plt.ylabel("F1-score")
+    plt.legend(); plt.grid(True); plt.tight_layout()
+    plt.savefig(os.path.join(plot_dir, f"{dataset_name}_run{run_id}_f1_curve.png"))
+    plt.close()
 
-        # Plot F1 score over thresholds
-        plt.figure(figsize=(8, 5))
-        plt.plot(thresholds, f1_scores, label="F1 Score", color="darkorange")
-        plt.axvline(x=f1_threshold, color="green", linestyle="--", label=f'Best F1 = {best_f1:.4f} at {f1_threshold:.4f}')
-        plt.title("F1 Score vs Threshold")
-        plt.xlabel("Threshold")
-        plt.ylabel("F1 Score")
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
+    # -- FAR / FRR bar chart
+    plt.figure(figsize=(4, 5))
+    bars = plt.bar(["FAR", "FRR"], [far, frr], color=["red", "blue"])
+    for bar in bars:
+        plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02,
+                 f"{bar.get_height():.4f}", ha="center", va="bottom")
+    plt.ylim(0, 1); plt.ylabel("Rate"); plt.title("FAR & FRR @ F1-Optimal Threshold")
+    plt.tight_layout()
+    plt.savefig(os.path.join(plot_dir, f"{dataset_name}_run{run_id}_far_frr.png"))
+    plt.close()
 
-        plot_dir = os.path.join(output_dir, "plots")
-        os.makedirs(plot_dir, exist_ok=True)
-        f1_plot_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_f1_threshold_curve.png")
-        plt.savefig(f1_plot_path)
-        plt.close()
+    # -- Confusion matrix
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm,
+                                  display_labels=["Genuine", "Forged"])
+    disp.plot(cmap="Blues", values_format="d")
+    plt.title(f"Confusion Matrix @ Threshold {best_thr:.4f}")
+    plt.tight_layout()
+    plt.savefig(os.path.join(plot_dir, f"{dataset_name}_run{run_id}_confmat.png"))
+    plt.close()
 
-        # Compute FAR and FRR at F1-optimal threshold
-        cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
-        if cm.shape == (2, 2):
-            tn, fp, fn, tp = cm.ravel()
-            far = fp / (fp + tn + 1e-6)
-            frr = fn / (fn + tp + 1e-6)
-        else:
-            far = frr = 0.0
-            print("⚠ Confusion matrix incomplete at F1 threshold.")
-
-        from sklearn.metrics import ConfusionMatrixDisplay
-
-        # Save confusion matrix plot at F1 threshold
-        if cm.shape == (2, 2):
-            disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['Genuine', 'Forged'])
-            disp.plot(cmap='Blues', values_format='d')
-            plt.title(f"Confusion Matrix @ F1 Threshold ({f1_threshold:.4f})")
-            confmat_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_f1_confmat.png")
-            plt.savefig(confmat_path)
-            plt.close()
-            print(f"🧩 Confusion matrix saved to {confmat_path}")
-
-        # Bar plot of FAR and FRR
-        plt.figure(figsize=(5, 5))
-        bars = plt.bar(['FAR', 'FRR'], [far, frr], color=['red', 'blue'])
-        plt.ylim(0, 1)
-        for bar in bars:
-            yval = bar.get_height()
-            plt.text(bar.get_x() + bar.get_width()/2, yval + 0.02, f"{yval:.4f}", ha='center', va='bottom')
-
-        plt.title(f"FAR and FRR at F1 Threshold ({f1_threshold:.4f})")
-        plt.ylabel("Error Rate")
-        plt.tight_layout()
-
-        bar_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_f1_farfrr_bar.png")
-        plt.savefig(bar_path)
-        plt.close()
-        print(f"📊 FAR/FRR bar chart saved to {bar_path}")
-
-        farfrr_curve_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_f1far_frr_curve.png")
-        plt.savefig(farfrr_curve_path)
-        plt.close()
-        print(f"📉 FAR/FRR curve saved to {farfrr_curve_path}")
-    # Basic metrics
-    acc = accuracy_score(y_true, y_pred)
-    f1 = f1_score(y_true, y_pred, zero_division=0)
-
-    # Save metrics
     if dataset_name:
         os.makedirs(output_dir, exist_ok=True)
-        filepath = os.path.join(output_dir, f"{dataset_name}_run{run_id}_metrics.txt")
-        with open(filepath, "w") as f:
-            f.write(f"Evaluation Metrics for {dataset_name}\n")
-            f.write("="*40 + "\n")
-            f.write(f"Accuracy       : {acc:.4f}\n")
-            f.write(f"F1 Score       : {f1:.4f}\n")
-            f.write(f"ROC AUC        : {auc:.4f}\n" if auc is not None else "ROC AUC        : Not available\n")
-            f.write(f"FAR (FP Rate)  : {far:.4f}\n")
-            f.write(f"FRR (FN Rate)  : {frr:.4f}\n")
-            if f1_threshold is not None:
-                f.write(f"F1 Threshold   : {f1_threshold:.4f}\n")
-        print(f"📝 Metrics saved to {filepath}")
-
+        with open(os.path.join(output_dir, f"{dataset_name}_run{run_id}_metrics.txt"), "w") as f:
+            f.write("Evaluation Metrics\n")
+            f.write("=" * 30 + "\n")
+            f.write(f"Accuracy   : {acc:.4f}\n")
+            f.write(f"F1-score   : {best_f1:.4f}\n")
+            f.write(f"ROC-AUC    : {auc:.4f}\n" if auc else "ROC-AUC    : N/A\n")
+            f.write(f"FAR        : {far:.4f}\n")
+            f.write(f"FRR        : {frr:.4f}\n")
+            f.write(f"Threshold  : {best_thr:.4f}\n")
+    # ------------------------------------------------------------------
     return {
         "accuracy": acc,
-        "f1_score": f1,
+        "f1_score": best_f1,
         "roc_auc": auc,
         "far": far,
         "frr": frr,
-        "f1_threshold": f1_threshold
+        "f1_threshold": best_thr,
     }
 
 # Parameters
@@ -259,6 +224,9 @@ results = []
 for dataset_name, config in datasets.items():
     print(f"\n📦 Processing Siamese Model for Dataset: {dataset_name}")
     # Load and generate training pairs (all writers in train set)
+    existing_files = [f for f in os.listdir("models") if f.startswith(f"{dataset_name}_run")]
+    run_id = len(existing_files) + 1  
+
     generator = SignatureDataGenerator(
         dataset={dataset_name: config},
         img_height=IMG_SHAPE[0],
@@ -290,7 +258,7 @@ for dataset_name, config in datasets.items():
     )
 
     # Save model
-    model_save_path = f"models/{dataset_name}_f1_model.h5"
+    model_save_path = f"models/{dataset_name}_run{run_id}_f1_model.h5"
     os.makedirs("models", exist_ok=True)
     model.save(model_save_path)
     print(f"model saved to: {model_save_path}")

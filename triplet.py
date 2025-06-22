@@ -53,10 +53,7 @@ def create_base_network(input_shape):
     return model
 
 def triplet_loss(margin=1):
-    """
-    Triplet loss function with margin.
-    """
-    def loss(y_true, y_pred):  # y_pred has shape (batch_size, 3, embedding_dim)
+    def loss(y_true, y_pred): 
         anchor = y_pred[:, 0]
         positive = y_pred[:, 1]
         negative = y_pred[:, 2]

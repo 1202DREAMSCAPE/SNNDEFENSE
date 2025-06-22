@@ -104,7 +104,7 @@ def evaluate_classification_metrics(y_true, distances, dataset_name=None, output
     scores = 1 - distances / np.max(distances)
 
     # --- F1-Optimal Threshold selection ---
-    best_threshold = 0.5
+    best_threshold = 0.0
     best_f1 = 0.0
     thresholds = np.linspace(0, 1, 200)
 
@@ -116,14 +116,14 @@ def evaluate_classification_metrics(y_true, distances, dataset_name=None, output
             best_threshold = thresh
 
     f1_threshold = best_threshold
+    
     y_pred = (scores >= f1_threshold).astype(int)
-    print(f"📌 Optimal F1 Threshold: {f1_threshold:.4f}")
 
     # Confusion matrix
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
     tn, fp, fn, tp = cm.ravel() if cm.shape == (2, 2) else (0, 0, 0, 0)
 
-    # Metrics
+    # metric calculations
     acc = accuracy_score(y_true, y_pred)
     far = fp / (fp + tn + 1e-6)
     frr = fn / (fn + tp + 1e-6)
