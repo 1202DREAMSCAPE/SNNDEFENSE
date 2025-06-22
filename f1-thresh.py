@@ -217,7 +217,7 @@ results_csv_path = "outputs/f1threshold/results.csv"
 if not os.path.exists(results_csv_path):
     with open(results_csv_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["Dataset", "Accuracy", "F1 Score", "ROC AUC", "FAR", "FRR", "Youden Threshold"])
+        writer.writerow(["Dataset", "Accuracy", "F1 Score", "ROC AUC", "FAR", "FRR", "F1 Threshold"])
 
 results = []
 
