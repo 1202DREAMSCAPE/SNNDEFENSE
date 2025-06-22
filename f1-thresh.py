@@ -5,7 +5,7 @@ import random
 from tensorflow.keras import layers, Model, Input, Sequential
 from tensorflow.keras.utils import register_keras_serializable
 from sklearn.metrics import (
-    accuracy_score, f1_score, roc_auc_score, roc_curve, confusion_matrix, silhouette_score, precision_score, recall_score
+    accuracy_score, f1_score, roc_auc_score, roc_curve, confusion_matrix
 )
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -19,16 +19,14 @@ from SignatureDataGenerator import SignatureDataGenerator
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.losses import SparseCategoricalCrossentropy
 from tensorflow.keras.metrics import SparseCategoricalAccuracy
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
-from sklearn.model_selection import train_test_split
 import csv
-from sklearn.preprocessing import MinMaxScaler
 import umap.umap_ as umap
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from collections import defaultdict, Counter
-from skimage.metrics import peak_signal_noise_ratio as compare_psnr
-
+from tensorflow.keras.layers import Lambda
+import sys
+run_id = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 
 np.random.seed(1337)
 random.seed(1337)
@@ -83,13 +81,11 @@ def build_siamese_network(input_shape):
     encoded_a = base_network(input_a)
     encoded_b = base_network(input_b)
 
-    # Step 2c: Combine outputs (e.g., concatenation)
-    combined = layers.Concatenate()([encoded_a, encoded_b])
-
-    # Dense layer to learn similarity from combined embeddings
-    x = layers.Dense(32, activation='relu')(combined)
-
-    # Step 2d: Final classification layer (genuine vs forged)
+    # Use Lambda layer for TensorFlow operations
+    distance = Lambda(lambda x: tf.abs(x[0] - x[1]))([encoded_a, encoded_b])
+    
+    # Modified classifier head
+    x = layers.Dense(64, activation='relu')(distance)
     output = layers.Dense(2, activation='softmax')(x)
 
     # Full Siamese model
@@ -97,10 +93,6 @@ def build_siamese_network(input_shape):
     return model
 
 def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, output_dir="outputs/f1threshold"):
-    """
-    Evaluate binary classification metrics from softmax probability outputs using F1-optimal threshold.
-    Saves FAR/FRR vs threshold plot, FAR/FRR bar chart, and logs metrics.
-    """
     f1_threshold = auc = None
     y_pred = np.zeros_like(y_true)
 
@@ -108,7 +100,6 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
         scores = y_pred_probs[:, 1]  # Probability of class '1' (forged)
 
         # --- F1-Optimal Threshold selection ---
-        best_threshold = 0.5
         best_f1 = 0.0
         thresholds = np.linspace(0, 1, 200)
 
@@ -154,7 +145,7 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
 
         plot_dir = os.path.join(output_dir, "plots")
         os.makedirs(plot_dir, exist_ok=True)
-        f1_plot_path = os.path.join(plot_dir, f"{dataset_name}_f1_threshold_curve.png")
+        f1_plot_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_f1_threshold_curve.png")
         plt.savefig(f1_plot_path)
         plt.close()
 
@@ -175,7 +166,7 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
             disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['Genuine', 'Forged'])
             disp.plot(cmap='Blues', values_format='d')
             plt.title(f"Confusion Matrix @ F1 Threshold ({f1_threshold:.4f})")
-            confmat_path = os.path.join(plot_dir, f"{dataset_name}_f1_confmat.png")
+            confmat_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_f1_confmat.png")
             plt.savefig(confmat_path)
             plt.close()
             print(f"🧩 Confusion matrix saved to {confmat_path}")
@@ -192,39 +183,15 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
         plt.ylabel("Error Rate")
         plt.tight_layout()
 
-        bar_path = os.path.join(plot_dir, f"{dataset_name}_f1_farfrr_bar.png")
+        bar_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_f1_farfrr_bar.png")
         plt.savefig(bar_path)
         plt.close()
         print(f"📊 FAR/FRR bar chart saved to {bar_path}")
 
-        # FAR/FRR vs Threshold curve
-        plt.figure(figsize=(8, 5))
-        plt.plot(thresholds, far_values, label='FAR (False Acceptance Rate)', color='red')
-        plt.plot(thresholds, frr_values, label='FRR (False Rejection Rate)', color='blue')
-        plt.axvline(x=f1_threshold, color='green', linestyle="--", label=f'F1 Threshold = {f1_threshold:.4f}')
-        plt.title('FAR and FRR vs Threshold')
-        plt.xlabel('Threshold')
-        plt.ylabel('Error Rate')
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-
-        farfrr_curve_path = os.path.join(plot_dir, f"{dataset_name}_far_frr_curve.png")
+        farfrr_curve_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_f1far_frr_curve.png")
         plt.savefig(farfrr_curve_path)
         plt.close()
         print(f"📉 FAR/FRR curve saved to {farfrr_curve_path}")
-
-        plt.hist(scores, bins=50, color='darkblue', alpha=0.7)
-        plt.axvline(f1_threshold, color='green', linestyle='--', label=f'F1 Threshold = {f1_threshold:.4f}')
-        plt.title(f"{dataset_name} – Softmax Output Distribution (Class 1 Prob)")
-        plt.xlabel("Predicted Probability for Forged")
-        plt.ylabel("Count")
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-        plt.savefig(f"{plot_dir}/{dataset_name}_softmax_distribution.png")
-        plt.close()
-
     # Basic metrics
     acc = accuracy_score(y_true, y_pred)
     f1 = f1_score(y_true, y_pred, zero_division=0)
@@ -232,7 +199,7 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
     # Save metrics
     if dataset_name:
         os.makedirs(output_dir, exist_ok=True)
-        filepath = os.path.join(output_dir, f"{dataset_name}_metrics.txt")
+        filepath = os.path.join(output_dir, f"{dataset_name}_run{run_id}_metrics.txt")
         with open(filepath, "w") as f:
             f.write(f"Evaluation Metrics for {dataset_name}\n")
             f.write("="*40 + "\n")
@@ -258,10 +225,6 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
 BATCH_SIZE = 128
 EPOCHS = 5
 IMG_SHAPE = (155, 220, 1)  
-weights_dir = 'base_weights_softmax'
-metrics_dir = 'baseline_metrics_softmax'
-os.makedirs(weights_dir, exist_ok=True)
-os.makedirs(metrics_dir, exist_ok=True)
 
 datasets = {
     "CEDAR": {
@@ -280,6 +243,16 @@ datasets = {
          "test_writers": list(range(191, 260))
      }
 }
+
+os.makedirs("outputs/f1threshold", exist_ok=True)
+# Define the path for the results CSV file
+results_csv_path = "outputs/f1threshold/results.csv"
+
+# Ensure the CSV file has a header if it doesn't exist
+if not os.path.exists(results_csv_path):
+    with open(results_csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Dataset", "Accuracy", "F1 Score", "ROC AUC", "FAR", "FRR", "Youden Threshold"])
 
 results = []
 
@@ -339,3 +312,17 @@ for dataset_name, config in datasets.items():
         metrics = evaluate_classification_metrics(test_labels, y_pred_probs, dataset_name=dataset_name)
         results.append((dataset_name, metrics))
         print(f"✅ Evaluation Complete for {dataset_name}")
+
+                # Append results to the CSV file
+        with open(results_csv_path, "a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                dataset_name,
+                metrics["accuracy"],
+                metrics["f1_score"],
+                metrics["roc_auc"],
+                metrics["far"],
+                metrics["frr"],
+                metrics["f1_threshold"],
+            ])
+        print(f"✅ Results saved for {dataset_name}")

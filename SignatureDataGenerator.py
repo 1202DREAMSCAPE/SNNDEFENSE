@@ -4,12 +4,10 @@ import cv2
 import random
 import tensorflow as tf
 import pandas as pd
-import skimage
-from skimage.measure import shannon_entropy
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 import random
-from sklearn.metrics.pairwise import cosine_distances
+import csv
 
 # Ensure reproducibility
 np.random.seed(1337)
@@ -104,11 +102,6 @@ class SignatureDataGenerator:
         except Exception as e:
             print(f"⚠ Error processing image {img_path}: {e}")
             return np.zeros((self.img_height, self.img_width, 1), dtype=np.float32)
-
-    def preprocess_image_clahe_from_array(self, img):
-        img_uint8 = (img * 255).astype(np.uint8) if img.max() <= 1.0 else img.astype(np.uint8)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        return clahe.apply(img_uint8)
             
     def get_all_data_with_labels(self):
         """
@@ -154,47 +147,6 @@ class SignatureDataGenerator:
                     images.append(self.preprocess_image(img_path))
                     writer_ids.append(writer)
         return np.array(images), np.array(writer_ids)
-
-    def get_train_data(self):
-        """
-        Generate positive and negative pairs for contrastive training.
-        """
-        # print("📚 Training Writers Used:", sorted(set(writer for _, writer in self.train_writers))) 
-        def gen():
-            label_to_images = {}
-            for dataset_path, writer in self.train_writers:
-                for label_type in ["genuine", "forged"]:
-                    img_dir = os.path.join(dataset_path, f"writer_{writer:03d}", label_type)
-                    if not os.path.exists(img_dir):
-                        continue
-                    for fn in os.listdir(img_dir):
-                        img_path = os.path.join(img_dir, fn)
-                        img = self.preprocess_image(img_path)
-                        label_to_images.setdefault(writer, []).append(img)
-
-            writer_ids = list(label_to_images.keys())
-
-            # Positive and negative pair generation
-            for writer in writer_ids:
-                imgs = label_to_images[writer]
-                if len(imgs) > 1:
-                    for i in range(len(imgs) - 1):
-                        yield (imgs[i], imgs[i + 1]), 1  # Positive pair
-
-            for _ in range(len(writer_ids)):
-                w1, w2 = random.sample(writer_ids, 2)
-                img1 = random.choice(label_to_images[w1])
-                img2 = random.choice(label_to_images[w2])
-                yield (img1, img2), 0  # Negative pair
-
-        return tf.data.Dataset.from_generator(
-            gen,
-            output_signature=(
-                (tf.TensorSpec(shape=(None, None, 1), dtype=tf.float32),  # image1
-                tf.TensorSpec(shape=(None, None, 1), dtype=tf.float32)),  # image2
-                tf.TensorSpec(shape=(), dtype=tf.int32)  # label
-            )
-        )
 
     def get_train_data_with_labels(self):
         """
@@ -253,13 +205,13 @@ class SignatureDataGenerator:
                     writer_ids.append(writer)
         return np.array(images), np.array(writer_ids)
 
-    def get_unbatched_data(self, noisy=False):
-        dataset = self.get_noisy_test_data() if noisy else self.get_test_data()
-        images, labels = [], []
-        for img, label in dataset.unbatch():
-            images.append(img.numpy())
-            labels.append(label.numpy())
-        return np.array(images), np.array(labels)
+    def get_unbatched_data(self):
+            dataset = self.get_test_data()
+            images, labels = [], []
+            for img, label in dataset.unbatch():
+                images.append(img.numpy())
+                labels.append(label.numpy())
+            return np.array(images), np.array(labels)
 
     def preprocess_image_raw(self, img_path):
         if not isinstance(img_path, str) or not os.path.exists(img_path):
@@ -280,7 +232,7 @@ class SignatureDataGenerator:
             print(f"⚠ Error in raw preprocess: {e}")
             return np.zeros((self.img_height, self.img_width, 1), dtype=np.float32)
 
-    def generate_pairs(self, split='train', return_metadata=False, use_clahe=False, use_raw=False):
+    def generate_pairs(self, split='train', return_metadata=False, use_clahe=False, use_raw=False, log_csv_path=None):
         """
         Generate positive and negative pairs for training or evaluation.
 
@@ -310,7 +262,7 @@ class SignatureDataGenerator:
             writer_set = sorted(set(writer for _, writer in self.train_writers + self.test_writers))
             writer_list = self.train_writers + self.test_writers
         else:
-            raise ValueError("Invalid split type.")
+            raise ValueError("Invalid split.")
 
         print(f"📋 Writers used in '{split}' split: {writer_set}")
 
@@ -366,18 +318,30 @@ class SignatureDataGenerator:
                 if return_metadata:
                     meta.append((anchor_fn, fn2, f"{writer}_vs_{w2}"))
 
-        combined = list(zip(pairs, labels))
+        combined = list(zip(pairs, labels, meta if return_metadata else [None]*len(pairs)))
         random.shuffle(combined)
-        pairs, labels = zip(*combined)
+        pairs, labels, meta_shuffled = zip(*combined)
         pairs = list(pairs)
         labels = list(labels)
+        if return_metadata:
+            meta = list(meta_shuffled)
+
+        # Log to CSV 
+        if log_csv_path is not None and return_metadata and meta:
+            os.makedirs(os.path.dirname(log_csv_path), exist_ok=True) 
+            write_header = not os.path.exists(log_csv_path)
+            with open(log_csv_path, "a", newline="") as csvfile:
+                writer_csv = csv.writer(csvfile)
+                if write_header:
+                    writer_csv.writerow(["img1", "img2", "meta"])
+                writer_csv.writerows(meta)
 
         if return_metadata:
             return pairs, labels, meta
         else:
             return pairs, labels
-
-    def generate_triplets(self, dataset_path, writer, use_clahe=False, use_raw=False):
+        
+    def generate_triplets(self, dataset_path, writer, use_clahe=False, use_raw=False, log_csv_path=None):
         writer_path = os.path.join(dataset_path, f"writer_{writer:03d}")
         genuine_path = os.path.join(writer_path, "genuine")
         forged_path = os.path.join(writer_path, "forged")
@@ -386,14 +350,31 @@ class SignatureDataGenerator:
             return []
 
         genuine_imgs = [os.path.join(genuine_path, f) for f in os.listdir(genuine_path) if f.endswith((".png", ".jpg"))]
-        forged_imgs = [os.path.join(forged_path, f) for f in os.listdir(forged_path) if f.endswith((".png", ".jpg"))]
+        forged_imgs  = [os.path.join(forged_path, f) for f in os.listdir(forged_path) if f.endswith((".png", ".jpg"))]
+        if len(genuine_imgs) < 2:
+            return []
 
-        if len(genuine_imgs) < 2 or len(forged_imgs) == 0:
+        # Negative pool: add all forgeries of current writer (skilled forgeries)
+        negative_candidates = []
+        negative_candidates.extend(forged_imgs)  # Add forged signatures of this writer (forgeries by others)
+
+        # Add all images (genuine/forged) of other writers as additional negatives
+        for (other_dataset_path, other_writer) in self.train_writers:
+            if other_writer == writer:
+                continue
+            for label_type in ["genuine", "forged"]:
+                neg_dir = os.path.join(other_dataset_path, f"writer_{other_writer:03d}", label_type)
+                if os.path.exists(neg_dir):
+                    negative_candidates.extend(
+                        [os.path.join(neg_dir, f) for f in os.listdir(neg_dir) if f.endswith((".png", ".jpg"))]
+                    )
+
+        if not negative_candidates:
             return []
 
         triplets = []
+        triplet_logs = []
 
-        # ✅ Choose the correct preprocessing function
         if use_raw:
             preprocess = self.preprocess_image_raw
         elif use_clahe:
@@ -401,22 +382,31 @@ class SignatureDataGenerator:
         else:
             preprocess = self.preprocess_image
 
-        # ✅ Build triplets
         for i in range(len(genuine_imgs) - 1):
             anchor_path = genuine_imgs[i]
             positive_path = genuine_imgs[i + 1]
-            negative_path = random.choice(forged_imgs)
+            negative_path = random.choice(negative_candidates)
 
             anchor_img   = preprocess(anchor_path)
             positive_img = preprocess(positive_path)
             negative_img = preprocess(negative_path)
 
             triplets.append((anchor_img, positive_img, negative_img))
+            triplet_logs.append([anchor_path, positive_path, negative_path])
 
+            # Write to CSV (as before)
+            if log_csv_path is not None and triplet_logs:
+                os.makedirs(os.path.dirname(log_csv_path), exist_ok=True)
+                write_header = not os.path.exists(log_csv_path)
+                with open(log_csv_path, "a", newline="") as csvfile:
+                    writer_csv = csv.writer(csvfile)
+                    if write_header:
+                        writer_csv.writerow(["anchor", "positive", "negative"])
+                    writer_csv.writerows(triplet_logs)
         return triplets
 
 
-    def get_triplet_data(self, writers_list,use_clahe=False, use_raw=False):
+    def get_triplet_data(self, writers_list,use_clahe=False, use_raw=False, log_csv_path=None):
         """Generate triplet data formatted for TensorFlow's Dataset API."""
         triplets = []
 
@@ -425,14 +415,12 @@ class SignatureDataGenerator:
                 print(f"⚠ Skipping writer {writer} (not in train_writers)")
                 continue  
 
-            writer_triplets = self.generate_triplets(dataset_path, writer, use_clahe=use_clahe, use_raw=use_raw)
+            writer_triplets = self.generate_triplets(dataset_path, writer, 
+                                                     use_clahe=use_clahe, 
+                                                     use_raw=use_raw,
+                                                     log_csv_path=log_csv_path)
             if writer_triplets:
                 triplets.extend(writer_triplets)
-            
-            # if writer_triplets:
-            #     # print(f"🟢 Writer {writer} generated {len(writer_triplets)} triplets.")
-            # else:
-            #     print(f"⚠ Writer {writer} has no valid triplets.")
 
         random.shuffle(triplets)
         
@@ -451,9 +439,9 @@ class SignatureDataGenerator:
 
         return tf.data.Dataset.from_generator(generator, output_signature=output_signature).batch(self.batch_sz)
 
-    def get_triplet_train(self, use_clahe=False):
+    def get_triplet_train(self, use_clahe=False, log_csv_path=None):
         """Generate triplet training data using TensorFlow Dataset."""
-        return (self.get_triplet_data(self.train_writers, use_clahe=use_clahe)
+        return (self.get_triplet_data(self.train_writers, use_clahe=use_clahe, log_csv_path=log_csv_path)
                     .repeat()
                     .prefetch(tf.data.experimental.AUTOTUNE))
 

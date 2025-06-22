@@ -13,7 +13,9 @@ from SignatureDataGenerator import SignatureDataGenerator
 from collections import Counter
 import seaborn as sns
 import umap
-
+import csv
+import sys
+run_id = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 np.random.seed(1337)
 random.seed(1337)
 tf.random.set_seed(1337)
@@ -127,23 +129,32 @@ def evaluate_classification_metrics(y_true, distances, dataset_name=None, output
     frr = fn / (fn + tp + 1e-6)
     tpr = tp / (tp + fn + 1e-6)
     tnr = tn / (tn + fp + 1e-6)
+    f1 = f1_score(y_true, y_pred, zero_division=0)
+    try:
+        rocauc = roc_auc_score(y_true, scores)
+    except Exception:
+        rocauc = float('nan')
 
     # Save metrics
     if dataset_name:
         os.makedirs(output_dir, exist_ok=True)
-        filepath = os.path.join(output_dir, f"{dataset_name}_metrics.txt")
+        filepath = os.path.join(output_dir, f"{dataset_name}_run{run_id}_metrics.txt")
         with open(filepath, "w") as f:
             f.write(f"Evaluation Metrics for {dataset_name}\n")
             f.write("="*40 + "\n")
             f.write(f"Accuracy       : {acc:.4f}\n")
+            f.write(f"F1-score       : {f1:.4f}\n")
+            f.write(f"ROC AUC        : {rocauc:.4f}\n")
             f.write(f"FAR (FP Rate)  : {far:.4f}\n")
             f.write(f"FRR (FN Rate)  : {frr:.4f}\n")
-            f.write(f"TPR (Sensitivity): {tpr:.4f}\n")
-            f.write(f"TNR (Specificity): {tnr:.4f}\n")
+            f.write(f"TPR: {tpr:.4f}\n")
+            f.write(f"TNR: {tnr:.4f}\n")
         print(f"📝 Metrics saved to {filepath}")
 
     return {
         "accuracy": acc,
+        "f1": f1,
+        "rocauc": rocauc,
         "far": far,
         "frr": frr,
         "tpr": tpr,
@@ -188,7 +199,7 @@ def compute_distance_distributions(model, generator, dataset_name, base_output_d
     plt.ylabel('Density')
     plt.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "distance_distribution.png"))
+    plt.savefig(os.path.join(output_dir, f"{dataset_name}_run{run_id}_distance_distribution.png"))
     plt.close()
 
     # Step 5: UMAP visualization
@@ -199,7 +210,7 @@ def compute_distance_distributions(model, generator, dataset_name, base_output_d
     plt.colorbar(scatter, label="Writer ID")
     plt.title(f'UMAP of Embeddings - {dataset_name}')
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "umap.png"))
+    plt.savefig(os.path.join(output_dir, f"{dataset_name}_run{run_id}_umap.png"))
     plt.close()
 
     # Step 6: Save stats
@@ -286,6 +297,16 @@ datasets = {
     }
 }
 
+os.makedirs("outputs/enhanced", exist_ok=True)
+# Define the path for the results CSV file
+results_csv_path = "outputs/enhanced/results.csv"
+
+# Ensure the CSV file has a header if it doesn't exist
+if not os.path.exists(results_csv_path):
+    with open(results_csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Dataset", "Accuracy", "F1 Score", "ROC-AUC", "FAR", "FRR", "TPR", "TNR"])
+
 results = []
 
 for dataset_name, config in datasets.items():
@@ -300,7 +321,8 @@ for dataset_name, config in datasets.items():
     )
 
     # Load triplet data
-    train_dataset = generator.get_triplet_train(use_clahe=True)
+    train_dataset = generator.get_triplet_train(use_clahe=True,
+                                                log_csv_path=f"outputs/logs/{dataset_name}_run{run_id}__triplets.csv")
 
     # Build model (triplet loss version)
     model = build_triplet_network(IMG_SHAPE)
@@ -316,11 +338,11 @@ for dataset_name, config in datasets.items():
     )
 
     # Save the model weights
-    enhanced_weights_path = f"{weights_dir}/{dataset_name}.weights.h5"
+    enhanced_weights_path = f"{weights_dir}/{dataset_name}_run{run_id}.weights.h5"
     model.save_weights(enhanced_weights_path)
     print(f"✅ Enhanced model weights saved to: {enhanced_weights_path}")
 
-    base_net_path = f"{weights_dir}/{dataset_name}_base.weights.h5"
+    base_net_path = f"{weights_dir}/{dataset_name}_base_run{run_id}.weights.h5"
     base_net = model.get_layer('base_network')
     base_net.save_weights(base_net_path)
     print(f"✅ Base network weights saved to: {base_net_path}")
@@ -338,17 +360,21 @@ for dataset_name, config in datasets.items():
     else:
         # Load the saved embedding model for inference
         embedding_model = create_base_network(IMG_SHAPE)
-        embedding_model.load_weights(f"{weights_dir}/{dataset_name}_base.weights.h5")
-        print(f"✅ Loaded embedding weights from {enhanced_weights_path}")
+        embedding_model.load_weights(f"{weights_dir}/{dataset_name}_base_run{run_id}.weights.h5")
+        print(f"✅ Loaded embedding weights from {weights_dir}/{dataset_name}_base_run{run_id}.weights.h5")
 
         # Generate embeddings
         emb1 = embedding_model.predict(test_img1, batch_size=128)
         emb2 = embedding_model.predict(test_img2, batch_size=128)
 
         # Save reference embeddings
-        reference_embeddings_path = f"{weights_dir}/{dataset_name}_reference_embeddings.npy"
+        reference_embeddings_path = f"{weights_dir}/{dataset_name}_reference_embeddings_run{run_id}.npy"
         np.save(reference_embeddings_path, emb1)
         print(f"✅ Reference embeddings saved to: {reference_embeddings_path}")
+        # Save reference labels
+        reference_labels_path = f"{weights_dir}/{dataset_name}_reference_labels_run{run_id}.npy"
+        np.save(reference_labels_path, test_labels)
+        print(f"✅ Reference labels    saved to: {reference_labels_path}")
 
         distances = np.linalg.norm(emb1 - emb2, axis=1)
         metrics = evaluate_classification_metrics(test_labels, distances, dataset_name=dataset_name)
@@ -356,3 +382,18 @@ for dataset_name, config in datasets.items():
         compute_distance_distributions(model, generator, dataset_name)
         generate_sop1_outputs(generator, save_path=metrics_dir)
         print(f"✅ Evaluation Complete for {dataset_name}")
+
+        # Save results to CSV
+        with open(results_csv_path, "a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                dataset_name,
+                metrics["accuracy"],
+                metrics["f1"],
+                metrics["rocauc"],
+                metrics["far"],
+                metrics["frr"],
+                metrics["tpr"],
+                metrics["tnr"]
+            ])
+        print(f"✅ Results saved for {dataset_name}")

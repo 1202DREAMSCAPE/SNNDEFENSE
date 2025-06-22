@@ -14,7 +14,8 @@ from collections import Counter
 import seaborn as sns
 import umap
 import csv
-
+import sys
+run_id = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 np.random.seed(1337)
 random.seed(1337)
 tf.random.set_seed(1337)
@@ -97,59 +98,123 @@ def build_triplet_network(input_shape):
 
 def evaluate_classification_metrics(y_true, distances, dataset_name=None, output_dir="outputs/tripletloss"):
     """
-    Evaluate binary classification metrics using F1-optimal threshold.
+    Evaluate binary classification metrics from Euclidean distances using Youden's J statistic.
+    Lower distance = more similar (genuine), so thresholding is done with <=.
     """
-    # Normalize distances to similarity scores
-    scores = 1 - distances / np.max(distances)
+    if len(np.unique(y_true)) == 2:
+        fpr, tpr, thresholds = roc_curve(y_true, -distances)  # Invert for correct direction
 
-    # --- F1-Optimal Threshold selection ---
-    best_threshold = 0.5
-    best_f1 = 0.0
-    thresholds = np.linspace(0, 1, 200)
+        j_scores = tpr - fpr
+        j_best_idx = np.argmax(j_scores)
+        youden_threshold = thresholds[j_best_idx] * -1  # Undo inversion
 
-    for thresh in thresholds:
-        y_pred_temp = (scores >= thresh).astype(int)
-        f1 = f1_score(y_true, y_pred_temp, zero_division=0)
-        if f1 > best_f1:
-            best_f1 = f1
-            best_threshold = thresh
+        # Plot Youden's J
+        plt.figure(figsize=(8, 5))
+        plt.plot(-thresholds, j_scores, label="Youden’s J (TPR - FPR)", color="purple")
+        plt.axvline(x=youden_threshold, color="green", linestyle="--", label=f"Best J = {j_scores[j_best_idx]:.4f} at {youden_threshold:.4f}")
+        plt.title("Youden’s J Statistic vs Distance Threshold")
+        plt.xlabel("Distance Threshold")
+        plt.ylabel("Youden’s J (TPR - FPR)")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
 
-    f1_threshold = best_threshold
-    y_pred = (scores >= f1_threshold).astype(int)
-    print(f"📌 Optimal F1 Threshold: {f1_threshold:.4f}")
+        plot_dir = os.path.join(output_dir, "plots")
+        os.makedirs(plot_dir, exist_ok=True)
+        plot_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_youden_j_curve.png")
+        plt.savefig(plot_path)
+        plt.close()
+        print(f"📈 Youden’s J curve saved to {plot_path}")
 
-    # Confusion matrix
-    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
-    tn, fp, fn, tp = cm.ravel() if cm.shape == (2, 2) else (0, 0, 0, 0)
+        # Classification
+        y_pred = (distances <= youden_threshold).astype(int)
 
-    # Metrics
-    acc = accuracy_score(y_true, y_pred)
-    far = fp / (fp + tn + 1e-6)
-    frr = fn / (fn + tp + 1e-6)
-    tpr = tp / (tp + fn + 1e-6)
-    tnr = tn / (tn + fp + 1e-6)
+        # Confusion matrix
+        cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
+        if cm.shape == (2, 2):
+            tn, fp, fn, tp = cm.ravel()
+            far = fp / (fp + tn + 1e-6)
+            frr = fn / (fn + tp + 1e-6)
+        else:
+            far = frr = 0.0
+            print("⚠ Confusion matrix incomplete.")
 
-    # Save metrics
-    if dataset_name:
-        os.makedirs(output_dir, exist_ok=True)
-        filepath = os.path.join(output_dir, f"{dataset_name}_metrics.txt")
-        with open(filepath, "w") as f:
-            f.write(f"Evaluation Metrics for {dataset_name}\n")
-            f.write("="*40 + "\n")
-            f.write(f"Accuracy       : {acc:.4f}\n")
-            f.write(f"FAR (FP Rate)  : {far:.4f}\n")
-            f.write(f"FRR (FN Rate)  : {frr:.4f}\n")
-            f.write(f"TPR (Sensitivity): {tpr:.4f}\n")
-            f.write(f"TNR (Specificity): {tnr:.4f}\n")
-        print(f"📝 Metrics saved to {filepath}")
+        # Bar plot
+        plt.figure(figsize=(5, 5))
+        bars = plt.bar(['FAR', 'FRR'], [far, frr], color=['red', 'blue'])
+        for bar in bars:
+            yval = bar.get_height()
+            plt.text(bar.get_x() + bar.get_width()/2, yval + 0.02, f"{yval:.4f}", ha='center', va='bottom')
+        plt.ylim(0, 1)
+        plt.title(f"FAR and FRR at Youden’s Threshold ({youden_threshold:.4f})")
+        plt.tight_layout()
+        bar_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_youden_farfrr_bar.png")
+        plt.savefig(bar_path)
+        plt.close()
+        print(f"📊 FAR/FRR bar chart saved to {bar_path}")
 
-    return {
-        "accuracy": acc,
-        "far": far,
-        "frr": frr,
-        "tpr": tpr,
-        "tnr": tnr
-    }
+        auc = roc_auc_score(y_true, -distances)
+        acc = accuracy_score(y_true, y_pred)
+        f1 = f1_score(y_true, y_pred)
+
+        print("Evaluation Metrics:")
+        print(f"Accuracy:  {acc:.4f}")
+        print(f"F1 Score:  {f1:.4f}")
+        print(f"ROC AUC:   {auc:.4f}")
+        print(f"FAR:       {far:.4f}")
+        print(f"FRR:       {frr:.4f}")
+        print(f"Youden J Threshold: {youden_threshold:.4f}")
+
+        # FAR/FRR line plot
+        plt.figure(figsize=(8, 5))
+        plt.plot(-thresholds, fpr, label='FAR (False Acceptance Rate)', color='red')
+        plt.plot(-thresholds, 1 - tpr, label='FRR (False Rejection Rate)', color='blue')
+        plt.axvline(x=youden_threshold, color='green', linestyle='--', label=f'Youden J = {youden_threshold:.4f}')
+        plt.xlabel("Distance Threshold")
+        plt.ylabel("Error Rate")
+        plt.title("FAR and FRR vs Distance Threshold")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        far_frr_plot_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_far_frr_youden.png")
+        plt.savefig(far_frr_plot_path)
+        plt.close()
+        print(f"📉 FAR/FRR curve saved to {far_frr_plot_path}")
+
+        # Save to txt
+        if dataset_name:
+            os.makedirs(output_dir, exist_ok=True)
+            filepath = os.path.join(output_dir, f"{dataset_name}_run{run_id}_metrics.txt")
+            with open(filepath, "w") as f:
+                f.write(f"Evaluation Metrics for {dataset_name}\n")
+                f.write("="*40 + "\n")
+                f.write(f"Accuracy       : {acc:.4f}\n")
+                f.write(f"F1 Score       : {f1:.4f}\n")
+                f.write(f"ROC AUC        : {auc:.4f}\n")
+                f.write(f"FAR (FP Rate)  : {far:.4f}\n")
+                f.write(f"FRR (FN Rate)  : {frr:.4f}\n")
+                f.write(f"Youden J        : {youden_threshold:.4f}\n")
+            print(f"📝 Metrics saved to {filepath}")
+
+        return {
+            "accuracy": acc,
+            "f1_score": f1,
+            "roc_auc": auc,
+            "far": far,
+            "frr": frr,
+            "youden_threshold": youden_threshold
+        }
+
+    else:
+        print("⚠ ROC AUC and thresholding skipped — only one class present.")
+        return {
+            "accuracy": 0.0,
+            "f1_score": 0.0,
+            "roc_auc": 0.0,
+            "far": 0.0,
+            "frr": 0.0,
+            "youden_threshold": None
+        }
 
 
 def compute_distance_distributions(
@@ -188,7 +253,7 @@ def compute_distance_distributions(
     plt.ylabel('Density')
     plt.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "distance_distribution_triplet.png"))
+    plt.savefig(os.path.join(output_dir, f"run{run_id}_distance_distribution_triplet.png"))
     plt.close()
 
     # UMAP visualization
@@ -199,7 +264,7 @@ def compute_distance_distributions(
     plt.colorbar(scatter, label="Writer ID")
     plt.title(f'UMAP of Embeddings - {dataset_name}')
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "umap_triplet.png"))
+    plt.savefig(os.path.join(output_dir, f"run{run_id}_umap_triplet.png"))
     plt.close()
 
     # Save stats
@@ -214,9 +279,7 @@ BATCH_SIZE = 128
 EPOCHS = 5
 IMG_SHAPE = (155, 220, 1)  
 weights_dir = 'triplet_weights'
-metrics_dir = 'triplet_metrics'
 os.makedirs(weights_dir, exist_ok=True)
-os.makedirs(metrics_dir, exist_ok=True)
 
 datasets = {
     "CEDAR": {
@@ -245,7 +308,6 @@ if not os.path.exists(results_csv_path):
     with open(results_csv_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["Dataset", "Accuracy", "F1 Score", "ROC AUC", "FAR", "FRR", "Youden Threshold"])
-
 
 results = []
 
@@ -317,3 +379,16 @@ for dataset_name, config in datasets.items():
             dataset_name=dataset_name
         )
         print(f"✅ Evaluation Complete for {dataset_name}")
+
+        with open(results_csv_path, "a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                dataset_name,
+                metrics["accuracy"],
+                metrics["f1_score"],
+                metrics["roc_auc"],
+                metrics["far"],
+                metrics["frr"],
+                metrics["youden_threshold"]
+            ])
+        print(f"✅ Results saved for {dataset_name}")

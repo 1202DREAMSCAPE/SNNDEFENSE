@@ -5,7 +5,7 @@ import random
 from tensorflow.keras import layers, Model, Input, Sequential
 from tensorflow.keras.utils import register_keras_serializable
 from sklearn.metrics import (
-    accuracy_score, f1_score, roc_auc_score, roc_curve, confusion_matrix, silhouette_score, precision_score, recall_score
+    accuracy_score, f1_score, roc_auc_score, roc_curve, confusion_matrix
 )
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -27,7 +27,8 @@ import umap.umap_ as umap
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from collections import defaultdict, Counter
-from skimage.metrics import peak_signal_noise_ratio as compare_psnr
+import sys
+run_id = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 
 np.random.seed(1337)
 random.seed(1337)
@@ -94,25 +95,83 @@ def build_siamese_network(input_shape):
     model = Model(inputs=[input_a, input_b], outputs=output)
     return model
     
-def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, output_dir="outputs/visualizations_clahe", threshold=0.5):
+def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, output_dir="outputs/base"):
     """
-    Evaluate binary classification metrics from softmax probability outputs.
-    Saves metrics to a .txt file if dataset_name is provided.
+    Evaluate binary classification metrics from softmax probability outputs using Youden's J threshold.
+    Also saves FAR/FRR vs threshold plot and logs metrics.
     """
-    # Predicted labels
-    y_pred = np.argmax(y_pred_probs, axis=1)
+    # --- Youden's J threshold selection from ROC curve ---
+    if len(np.unique(y_true)) == 2:
+        scores = y_pred_probs[:, 1]  # Probability of class '1' (forged)
+        fpr, tpr, thresholds = roc_curve(y_true, scores)
+
+        j_scores = tpr - fpr
+        j_best_idx = np.argmax(j_scores)
+        youden_threshold = thresholds[j_best_idx]
+
+        # Plot Youden's J statistic across thresholds
+        plt.figure(figsize=(8, 5))
+        plt.plot(thresholds, j_scores, label="Youden’s J (TPR - FPR)", color="purple")
+        plt.axvline(x=youden_threshold, color="green", linestyle="--", label=f"Best J = {j_scores[j_best_idx]:.4f} at {youden_threshold:.4f}")
+        plt.title("Youden’s J Statistic vs Threshold")
+        plt.xlabel("Threshold")
+        plt.ylabel("Youden’s J (TPR - FPR)")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+
+        # Save the plot
+        plot_dir = os.path.join(output_dir, "plots")
+        os.makedirs(plot_dir, exist_ok=True)
+        plot_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_youden_j_curve.png")
+        plt.savefig(plot_path)
+        plt.close()
+
+        print(f"📈 Youden’s J curve saved to {plot_path}")
+
+                # Compute FAR and FRR at Youden threshold
+        y_pred_youden = (scores >= youden_threshold).astype(int)
+        cm = confusion_matrix(y_true, y_pred_youden, labels=[0, 1])
+
+        if cm.shape == (2, 2):
+            tn, fp, fn, tp = cm.ravel()
+            far_youden = fp / (fp + tn + 1e-6)
+            frr_youden = fn / (fn + tp + 1e-6)
+        else:
+            far_youden = frr_youden = 0.0
+            print("⚠ Confusion matrix incomplete at Youden threshold.")
+
+        # Bar plot of FAR and FRR
+        plt.figure(figsize=(5, 5))
+        bars = plt.bar(['FAR', 'FRR'], [far_youden, frr_youden], color=['red', 'blue'])
+        plt.ylim(0, 1)
+        for bar in bars:
+            yval = bar.get_height()
+            plt.text(bar.get_x() + bar.get_width()/2, yval + 0.02, f"{yval:.4f}", ha='center', va='bottom')
+
+        plt.title(f"FAR and FRR at Youden’s J Threshold ({youden_threshold:.4f})")
+        plt.ylabel("Error Rate")
+        plt.tight_layout()
+
+        # Save bar chart
+        bar_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_youden_farfrr_bar.png")
+        plt.savefig(bar_path)
+        plt.close()
+        print(f"📊 FAR/FRR bar chart saved to {bar_path}")
+
+        # Use Youden's threshold for binary classification
+        y_pred = (scores >= youden_threshold).astype(int)
+        auc = roc_auc_score(y_true, scores)
+        fnr = 1 - tpr
+
+    else:
+        auc = youden_threshold = None
+        y_pred = np.zeros_like(y_true)
+        print("⚠ ROC AUC, Youden threshold not computed (only one class in y_true)")
 
     # Basic metrics
     acc = accuracy_score(y_true, y_pred)
     f1 = f1_score(y_true, y_pred, zero_division=0)
-
-    # ROC AUC
-    if len(np.unique(y_true)) == 2:
-        auc = roc_auc_score(y_true, y_pred_probs[:, 1])
-        fpr, tpr, thresholds = roc_curve(y_true, y_pred_probs[:, 1])
-    else:
-        auc = None
-        print("⚠ ROC AUC not computed (only one class in y_true)")
 
     # Confusion matrix and derived metrics
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
@@ -131,11 +190,33 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
     print(f"ROC AUC:   {auc:.4f}" if auc is not None else "❌ ROC AUC:   Not available")
     print(f"FAR:       {far:.4f}")
     print(f"FRR:       {frr:.4f}")
+    print(f"Youden J Threshold: {youden_threshold:.4f}" if youden_threshold is not None else "❌ Youden J: Not available")
+
+    # FAR/FRR Curve Visualization
+    if len(np.unique(y_true)) == 2:
+        plt.figure(figsize=(8, 5))
+        plt.plot(thresholds, fpr, label='FAR (False Acceptance Rate)', color='red')
+        plt.plot(thresholds, 1 - tpr, label='FRR (False Rejection Rate)', color='blue')
+        plt.axvline(x=youden_threshold, color='green', linestyle='--', label=f'Youden J = {youden_threshold:.4f}')
+        plt.title('FAR and FRR vs Threshold')
+        plt.xlabel('Threshold')
+        plt.ylabel('Error Rate')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+
+        # Save the plot
+        plot_dir = os.path.join(output_dir, "plots")
+        os.makedirs(plot_dir, exist_ok=True)
+        plot_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_far_frr_youden.png")
+        plt.savefig(plot_path)
+        plt.close()
+        print(f"📉 FAR/FRR curve saved to {plot_path}")
 
     # Save to file if dataset name is provided
     if dataset_name:
         os.makedirs(output_dir, exist_ok=True)
-        filepath = os.path.join(output_dir, f"{dataset_name}_metrics_clahe.txt")
+        filepath = os.path.join(output_dir, f"{dataset_name}_run{run_id}_metrics.txt")
         with open(filepath, "w") as f:
             f.write(f"Evaluation Metrics for {dataset_name}\n")
             f.write("="*40 + "\n")
@@ -144,6 +225,8 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
             f.write(f"ROC AUC        : {auc:.4f}\n" if auc is not None else "ROC AUC        : Not available\n")
             f.write(f"FAR (FP Rate)  : {far:.4f}\n")
             f.write(f"FRR (FN Rate)  : {frr:.4f}\n")
+            if youden_threshold is not None:
+                f.write(f"Youden J        : {youden_threshold:.4f}\n")
         print(f"📝 Metrics saved to {filepath}")
 
     return {
@@ -151,7 +234,8 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
         "f1_score": f1,
         "roc_auc": auc,
         "far": far,
-        "frr": frr
+        "frr": frr,
+        "youden_threshold": youden_threshold
     }
 
 def plot_image_comparison(original, normalized, filename, dataset_name):
@@ -287,7 +371,7 @@ for dataset_name, config in datasets.items():
     generate_sop1_outputs(
         generator)
     
-    # ====================
+    # ========== Distance Distribution and FAR/FRR ==========
     print(f"\n🔍 Running real world metrics for {dataset_name}")
 
     test_pairs, test_labels = generator.generate_pairs(split='test', use_raw=True)
@@ -314,5 +398,6 @@ for dataset_name, config in datasets.items():
                 metrics["roc_auc"],
                 metrics["far"],
                 metrics["frr"],
+                metrics["youden_threshold"],
             ])
         print(f"✅ Results saved for {dataset_name}")

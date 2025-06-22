@@ -5,7 +5,7 @@ import random
 from tensorflow.keras import layers, Model, Input, Sequential
 from tensorflow.keras.utils import register_keras_serializable
 from sklearn.metrics import (
-    accuracy_score, f1_score, roc_auc_score, roc_curve, confusion_matrix, silhouette_score, precision_score, recall_score
+    accuracy_score, f1_score, roc_auc_score, roc_curve, confusion_matrix
 )
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -27,10 +27,9 @@ import umap.umap_ as umap
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from collections import defaultdict, Counter
-from skimage.metrics import peak_signal_noise_ratio as compare_psnr
-from tensorflow.keras import mixed_precision
+import sys
+run_id = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 
-mixed_precision.set_global_policy("mixed_float16")
 np.random.seed(1337)
 random.seed(1337)
 tf.random.set_seed(1337)
@@ -125,7 +124,7 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
         # Save the plot
         plot_dir = os.path.join(output_dir, "plots")
         os.makedirs(plot_dir, exist_ok=True)
-        plot_path = os.path.join(plot_dir, f"{dataset_name}_youden_j_curve.png")
+        plot_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_youden_j_curve.png")
         plt.savefig(plot_path)
         plt.close()
 
@@ -156,7 +155,7 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
         plt.tight_layout()
 
         # Save bar chart
-        bar_path = os.path.join(plot_dir, f"{dataset_name}_youden_farfrr_bar.png")
+        bar_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_youden_farfrr_bar.png")
         plt.savefig(bar_path)
         plt.close()
         print(f"📊 FAR/FRR bar chart saved to {bar_path}")
@@ -210,7 +209,7 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
         # Save the plot
         plot_dir = os.path.join(output_dir, "plots")
         os.makedirs(plot_dir, exist_ok=True)
-        plot_path = os.path.join(plot_dir, f"{dataset_name}_far_frr_youden.png")
+        plot_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_far_frr_youden.png")
         plt.savefig(plot_path)
         plt.close()
         print(f"📉 FAR/FRR curve saved to {plot_path}")
@@ -218,7 +217,7 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
     # Save to file if dataset name is provided
     if dataset_name:
         os.makedirs(output_dir, exist_ok=True)
-        filepath = os.path.join(output_dir, f"{dataset_name}_metrics.txt")
+        filepath = os.path.join(output_dir, f"{dataset_name}_run{run_id}_metrics.txt")
         with open(filepath, "w") as f:
             f.write(f"Evaluation Metrics for {dataset_name}\n")
             f.write("="*40 + "\n")
@@ -323,7 +322,7 @@ def compute_distance_distributions(model, generator, dataset_name, base_output_d
     plt.ylabel('Density')
     plt.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "distance_distribution.png"))
+    plt.savefig(os.path.join(output_dir, f"{dataset_name}_run{run_id}_distance_distribution.png"))
     plt.close()
 
     # Step 5: UMAP visualization
@@ -334,11 +333,11 @@ def compute_distance_distributions(model, generator, dataset_name, base_output_d
     plt.colorbar(scatter, label="Writer ID")
     plt.title(f'UMAP of Embeddings - {dataset_name}')
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "umap.png"))
+    plt.savefig(os.path.join(output_dir, f"{dataset_name}_run{run_id}_umap.png"))
     plt.close()
 
     # Step 6: Save stats
-    stats_path = os.path.join(output_dir, "distance_stats.txt")
+    stats_path = os.path.join(output_dir, f"{dataset_name}_run{run_id}_distance_stats.txt")
     with open(stats_path, "w") as f:
         f.write(f"Intra-class: mean={np.mean(intra_dists):.4f}, std={np.std(intra_dists):.4f}\n")
         f.write(f"Inter-class: mean={np.mean(inter_dists):.4f}, std={np.std(inter_dists):.4f}\n")
@@ -391,7 +390,10 @@ for dataset_name, config in datasets.items():
         img_width=IMG_SHAPE[1],
         batch_sz=BATCH_SIZE,
     )
-    pairs, labels = generator.generate_pairs(use_raw=False)
+    pairs, labels, meta = generator.generate_pairs(
+        use_raw=False,
+        return_metadata=True,
+        log_csv_path=f"outputs/logs/{dataset_name}_run{run_id}_pairs.csv")
     labels = np.array(labels).astype(np.int32)
 
     # Shuffle pairs
@@ -428,8 +430,6 @@ for dataset_name, config in datasets.items():
 
     # Dynamically determine the run_id based on existing files
     existing_files = [f for f in os.listdir(model_dir) if f.startswith(f"{dataset_name}_run") and f.endswith("_siamese_model.h5")]
-    run_id = len(existing_files) + 1  # Increment based on existing files
-
     model_save_path = f"{model_dir}/{dataset_name}_run{run_id}_siamese_model.h5"
     model.save(model_save_path)
     print(f"💾 Model saved to: {model_save_path}")

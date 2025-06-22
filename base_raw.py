@@ -5,7 +5,7 @@ import random
 from tensorflow.keras import layers, Model, Input, Sequential
 from tensorflow.keras.utils import register_keras_serializable
 from sklearn.metrics import (
-    accuracy_score, f1_score, roc_auc_score, roc_curve, confusion_matrix, silhouette_score, precision_score, recall_score
+    accuracy_score, f1_score, roc_auc_score, roc_curve, confusion_matrix
 )
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -27,12 +27,11 @@ import umap.umap_ as umap
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from collections import defaultdict, Counter
-from skimage.metrics import peak_signal_noise_ratio as compare_psnr
-from tensorflow.keras import mixed_precision
 from tensorflow.keras import backend as K
 import gc
+import sys
+run_id = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 
-mixed_precision.set_global_policy("mixed_float16")
 np.random.seed(1337)
 random.seed(1337)
 tf.random.set_seed(1337)
@@ -127,7 +126,7 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
         # Save the plot
         plot_dir = os.path.join(output_dir, "plots")
         os.makedirs(plot_dir, exist_ok=True)
-        plot_path = os.path.join(plot_dir, f"{dataset_name}_youden_j_curve.png")
+        plot_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_youden_j_curve.png")
         plt.savefig(plot_path)
         plt.close()
 
@@ -158,7 +157,7 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
         plt.tight_layout()
 
         # Save bar chart
-        bar_path = os.path.join(plot_dir, f"{dataset_name}_youden_farfrr_bar.png")
+        bar_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_youden_farfrr_bar.png")
         plt.savefig(bar_path)
         plt.close()
         print(f"📊 FAR/FRR bar chart saved to {bar_path}")
@@ -212,7 +211,7 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
         # Save the plot
         plot_dir = os.path.join(output_dir, "plots")
         os.makedirs(plot_dir, exist_ok=True)
-        plot_path = os.path.join(plot_dir, f"{dataset_name}_far_frr_youden.png")
+        plot_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_far_frr_youden.png")
         plt.savefig(plot_path)
         plt.close()
         print(f"📉 FAR/FRR curve saved to {plot_path}")
@@ -220,7 +219,7 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
     # Save to file if dataset name is provided
     if dataset_name:
         os.makedirs(output_dir, exist_ok=True)
-        filepath = os.path.join(output_dir, f"{dataset_name}_metrics.txt")
+        filepath = os.path.join(output_dir, f"{dataset_name}_run{run_id}_metrics.txt")
         with open(filepath, "w") as f:
             f.write(f"Evaluation Metrics for {dataset_name}\n")
             f.write("="*40 + "\n")
