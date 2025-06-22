@@ -223,10 +223,6 @@ results = []
 
 for dataset_name, config in datasets.items():
     print(f"\n📦 Processing Siamese Model for Dataset: {dataset_name}")
-    # Load and generate training pairs (all writers in train set)
-    existing_files = [f for f in os.listdir("models") if f.startswith(f"{dataset_name}_run")]
-    run_id = len(existing_files) + 1  
-
     generator = SignatureDataGenerator(
         dataset={dataset_name: config},
         img_height=IMG_SHAPE[0],
