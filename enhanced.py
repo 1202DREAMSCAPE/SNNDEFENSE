@@ -106,7 +106,7 @@ def evaluate_classification_metrics(y_true, distances, dataset_name=None, output
     # --- F1-Optimal Threshold selection ---
     best_threshold = 0.0
     best_f1 = 0.0
-    thresholds = np.linspace(0, 1, 200)
+    thresholds = np.linspace(0, 1, 2001)
 
     for thresh in thresholds:
         y_pred_temp = (scores >= thresh).astype(int)

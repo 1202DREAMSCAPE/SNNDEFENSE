@@ -100,12 +100,21 @@ def evaluate_classification_metrics(
 ):
     scores = y_pred_probs[:, 1]     
     best_f1, best_thr = 0.0, 0.0
+
+    #0.0005 step 1-0/2000
     thresholds = np.linspace(0, 1, 2001)
+
+    #store F1 score at ea thresh
     f1_curve = []
 
     for thr in thresholds:
+        # 1 if the score is >= threshold, else 0
         preds = (scores >= thr).astype(int)
+
+        #compute using true label vs preds
         f1 = f1_score(y_true, preds, zero_division=0)
+
+        # storing the score for metric use
         f1_curve.append(f1)
 
         if f1 > best_f1:
