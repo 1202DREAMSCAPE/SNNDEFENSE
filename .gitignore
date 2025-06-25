@@ -2,7 +2,5 @@
 /venv
 /outputs
 /models
-/old codes
-/triplet_weights
 /signature_verification/Dataset
 /enhanced_weights

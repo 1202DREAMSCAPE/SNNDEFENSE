@@ -109,28 +109,20 @@ if __name__ == "__main__":
             "train_writers": list(range(260, 300)),
             "test_writers": list(range(300, 315))
         },
-        "BHSig260_Bengali": {
-            "path": "Dataset/BHSig260_Bengali",
-            "train_writers": list(range(1, 71)),
-            "test_writers": list(range(71, 101))
-        },
-        "BHSig260_Hindi": {
-            "path": "Dataset/BHSig260_Hindi",
-            "train_writers": list(range(101, 191)),
-            "test_writers": list(range(191, 260))
-        }
+        # "BHSig260_Bengali": {
+        #     "path": "Dataset/BHSig260_Bengali",
+        #     "train_writers": list(range(1, 71)),
+        #     "test_writers": list(range(71, 101))
+        # },
+        # "BHSig260_Hindi": {
+        #     "path": "Dataset/BHSig260_Hindi",
+        #     "train_writers": list(range(101, 191)),
+        #     "test_writers": list(range(191, 260))
+        # }
     }
 
     os.makedirs("outputs/base", exist_ok=True)
     results_csv_path = "outputs/base/results.csv"
-
-    # Ensure the CSV file has a header if it doesn't exist
-    if not os.path.exists(results_csv_path):
-        with open(results_csv_path, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["Dataset", "Accuracy", "F1 Score", "ROC AUC", "FAR", "FRR", "Youden Threshold"])
-
-    results = []
 
     for dataset_name, config in datasets.items():
         print(f"\n📦 Processing Siamese Model for Dataset: {dataset_name}")
@@ -148,12 +140,12 @@ if __name__ == "__main__":
             log_csv_path=f"outputs/logs/{dataset_name}_run{run_id}_pairs.csv")
         labels = np.array(labels).astype(np.int32)
 
-        # Shuffle pairs
-        combined = list(zip(pairs, labels))
-        np.random.shuffle(combined)
-        pairs, labels = zip(*combined)
-        pairs = list(pairs)
-        labels = np.array(labels).astype(np.int32)
+        # # Shuffle pairs
+        # combined = list(zip(pairs, labels))
+        # np.random.shuffle(combined)
+        # pairs, labels = zip(*combined)
+        # pairs = list(pairs)
+        # labels = np.array(labels).astype(np.int32)
 
         # Separate image pairs
         img1 = np.array([pair[0] for pair in pairs])
@@ -180,10 +172,10 @@ if __name__ == "__main__":
         model_dir = "models"
         os.makedirs(model_dir, exist_ok=True)
 
-        model_save_path = f"{model_dir}/base_{dataset_name}_siamese_model.h5"
-        model.save(model_save_path)
-        print(f"💾 Model saved to: {model_save_path}")
+        # Save the model in TensorFlow SavedModel format
+        model_save_path = f"{model_dir}/base_{dataset_name}_siamese_model.keras"
+        model.save(model_save_path)  # No need for save_format argument
+        print(f"✅ Model saved to: {model_save_path}")
 
         train_time = time.time() - start_time
         print(f"⏱ Training completed in {train_time:.2f} seconds")
-

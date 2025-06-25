@@ -20,8 +20,8 @@ base_reference_embeddings = load_reference_embeddings("base_reference_embeddings
 enhanced_reference_embeddings = load_reference_embeddings("enhanced_reference_embeddings.pkl")
 
 # Load models
-base_model = load_siamese_model("base_CEDAR_siamese_model.h5")
-enhanced_model = load_enhanced_siamese_model("enhanced_CEDAR.h5")
+base_model = load_siamese_model("base_CEDAR_siamese_model.tf")
+enhanced_model = load_enhanced_siamese_model("enhanced_CEDAR.tf")
 
 @app.route("/", methods=["GET"])
 def index():

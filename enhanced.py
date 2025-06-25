@@ -53,9 +53,6 @@ def create_base_network(input_shape):
     return model
 
 def triplet_loss(margin=1):
-    """
-    Triplet loss function with margin.
-    """
     def loss(y_true, y_pred):  # y_pred has shape (batch_size, 3, embedding_dim)
         anchor = y_pred[:, 0]
         positive = y_pred[:, 1]
@@ -122,31 +119,23 @@ if __name__ == "__main__":
             "train_writers": list(range(260, 300)),
             "test_writers": list(range(300, 315))
         },
-        "BHSig260_Bengali": {
-            "path": "Dataset/BHSig260_Bengali",
-            "train_writers": list(range(1, 71)),
-            "test_writers": list(range(71, 101))
-        },
-        "BHSig260_Hindi": {
-            "path": "Dataset/BHSig260_Hindi",
-            "train_writers": list(range(101, 191)),
-            "test_writers": list(range(191, 260))
-        }
+        # "BHSig260_Bengali": {
+        #     "path": "Dataset/BHSig260_Bengali",
+        #     "train_writers": list(range(1, 71)),
+        #     "test_writers": list(range(71, 101))
+        # },
+        # "BHSig260_Hindi": {
+        #     "path": "Dataset/BHSig260_Hindi",
+        #     "train_writers": list(range(101, 191)),
+        #     "test_writers": list(range(191, 260))
+        # }
     }
-
-    results_csv_path = "outputs/enhanced/results.csv"
-
-    # Ensure the CSV file has a header if it doesn't exist
-    if not os.path.exists(results_csv_path):
-        with open(results_csv_path, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["Dataset", "Accuracy", "F1 Score", "ROC-AUC", "FAR", "FRR", "TPR", "TNR"])
 
     results = []
 
     for dataset_name, config in datasets.items():
         print(f"\n📦 Processing Enhanced Model for Dataset: {dataset_name}")
-
+    
         # Load data generator
         generator = SignatureDataGenerator(
             dataset={dataset_name: config},
@@ -154,15 +143,15 @@ if __name__ == "__main__":
             img_width=IMG_SHAPE[1],
             batch_sz=BATCH_SIZE,
         )
-
+    
         # Load triplet data
         train_dataset = generator.get_triplet_train(use_clahe=True,
                                                     log_csv_path=f"outputs/logs/{dataset_name}_run{run_id}__triplets.csv")
-
+    
         # Build model (triplet loss version)
         model = build_triplet_network(IMG_SHAPE)
         model.compile(optimizer=Adam(learning_rate=0.0001), loss=triplet_loss(margin=1))
-
+    
         # ========== Training ==========
         print("🧠 Starting training with triplet loss ...")
         history = model.fit(
@@ -171,8 +160,8 @@ if __name__ == "__main__":
             epochs=EPOCHS,
             verbose=2
         )
-
-        # Save the model 
-        enhanced_model_path = f"{weights_dir}/enhanced_{dataset_name}.h5"
-        model.save(enhanced_model_path)
+    
+        # Save the model in TensorFlow SavedModel format
+        enhanced_model_path = f"{weights_dir}/enhanced_{dataset_name}.keras"
+        model.save(enhanced_model_path)  # No need for save_format argument
         print(f"✅ Enhanced model saved to: {enhanced_model_path}")
