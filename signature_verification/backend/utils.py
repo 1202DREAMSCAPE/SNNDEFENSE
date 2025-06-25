@@ -29,35 +29,40 @@ def calculate_f1_threshold(distances, labels):
 
 def verify_signature(claimed_writer_id, uploaded_signature_path, reference_embeddings, model, threshold=0.5):
     """
-    Verify the authenticity of a signature using the specified thresholding method.
-    - threshold_type: "youden" for Youden's J statistic (base model), "f1" for F1-thresholding (enhanced model).
+    Verify the authenticity of a signature using the specified threshold.
+    Handles both base (single embedding) and enhanced (list of dicts) models.
     """
     # Preprocess the uploaded signature
     uploaded_signature = preprocess_signature(uploaded_signature_path)
-    
-    # Retrieve the reference embedding for the claimed writer
-    reference_emb = reference_embeddings.get(claimed_writer_id)
-    if reference_emb is None:
+
+    # Generate embedding for uploaded signature
+    uploaded_emb = model.predict(np.expand_dims(uploaded_signature, axis=0), verbose=0)[0].flatten()
+
+    # Get all reference embeddings for the claimed writer
+    reference_objs = reference_embeddings.get(claimed_writer_id)
+    if reference_objs is None:
         return {"error": f"Writer ID {claimed_writer_id} not found."}
-    
-    # Generate embedding for the uploaded signature
-    uploaded_emb = model.predict(np.expand_dims(uploaded_signature, axis=0))
-    
-    # Calculate the distance between embeddings
-    distance = np.linalg.norm(reference_emb - uploaded_emb)
-    
-    # # Dynamically calculate the threshold if needed
-    # if threshold_type == "youden":
-    #     threshold = calculate_youden_j_threshold(distances, labels)  # Replace `distances` and `labels` with actual data
-    # elif threshold_type == "f1":
-    #     threshold = calculate_f1_threshold(distances, labels)  # Replace `distances` and `labels` with actual data
-    
-    # Compare distance against threshold
+
+    # Determine if it's a base model (single np.array) or enhanced (list of dicts)
+    if isinstance(reference_objs, np.ndarray):
+        # Base model: single reference embedding
+        distance = np.linalg.norm(reference_objs.flatten() - uploaded_emb)
+    else:
+        # Enhanced model: list of embeddings
+        min_dist = float("inf")
+        for ref in reference_objs:
+            dist = np.linalg.norm(ref["embedding"] - uploaded_emb)
+            if dist < min_dist:
+                min_dist = dist
+        distance = min_dist
+
+    # Decision
     is_authentic = distance <= threshold
-    
+
     return {
-    "result": "Genuine" if is_authentic else "Forged",
-    "distance": float(distance),
-    "threshold": float(threshold),
-    "confidence": float(1 - (distance / threshold)) if is_authentic else float(distance / threshold)
+        "result": "Genuine" if is_authentic else "Forged",
+        "distance": float(distance),
+        "threshold": float(threshold),
+        "confidence": float(1 - (distance / threshold)) if is_authentic else float(distance / threshold)
     }
+

@@ -1,28 +1,32 @@
-from flask import Flask, request, jsonify, render_template, send_file
+from flask import Flask, request, jsonify, render_template, send_from_directory
 import os
 import sys
 import cv2
 import pickle
-from tensorflow.keras.models import Model
+import random
+import shutil
+import numpy as np
+import tensorflow as tf
+
 # Ensure root-level imports for base and enhanced architectures
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
-import SignatureDataGenerator
 
-# Import custom modules
+from SignatureDataGenerator import SignatureDataGenerator
 from preprocess import preprocess_signature
 from model import load_siamese_model, load_enhanced_siamese_model
 from utils import verify_signature
 
 # Setup Flask
 app = Flask(__name__, template_folder="../frontend/templates")
-os.makedirs("temp", exist_ok=True)
+STATIC_TEMP = "static/temp"
+os.makedirs(STATIC_TEMP, exist_ok=True)
 
-# Load precomputed reference embeddings
-with open("../base_reference_embeddings.pkl", "rb") as f:
-    base_reference_embeddings = pickle.load(f)
-
-with open("../enhanced_reference_embeddings.pkl", "rb") as f:
+# Load reference embeddings
+with open("enhanced_reference_embeddings.pkl", "rb") as f:
     enhanced_reference_embeddings = pickle.load(f)
+
+with open("base_reference_embeddings.pkl", "rb") as f:
+    base_reference_embeddings = pickle.load(f)
 
 # Load models
 base_siamese_model = load_siamese_model("../../models/base_CEDAR_siamese_model.keras")
@@ -41,27 +45,26 @@ def verify_base():
     uploaded_file = request.files["signature"]
     writer_id = request.form["writer_id"]
     
-    # Save uploaded file
-    file_path = f"temp/{uploaded_file.filename}"
-    uploaded_file.save(file_path)
+    raw_path = f"{STATIC_TEMP}/{uploaded_file.filename}"
+    minmax_path = f"{STATIC_TEMP}/minmax_{uploaded_file.filename}"
+    uploaded_file.save(raw_path)
 
-    # Preprocess with MinMax
-    minmax_img = preprocess_signature(file_path, preprocessing_type="minmax")
-    minmax_img_path = f"temp/minmax_{uploaded_file.filename}"
-    cv2.imwrite(minmax_img_path, minmax_img.squeeze() * 255)
+    # Preprocess (MinMax)
+    minmax_img = preprocess_signature(raw_path, preprocessing_type="minmax")
+    cv2.imwrite(minmax_path, minmax_img.squeeze() * 255)
 
     result = verify_signature(
         claimed_writer_id=writer_id,
-        uploaded_signature_path=file_path,
+        uploaded_signature_path=raw_path,
         reference_embeddings=base_reference_embeddings,
         model=base_model,
         threshold=0.5
     )
 
     result.update({
-        "raw_image_url": f"/temp/{uploaded_file.filename}",
-        "minmax_image_url": f"/temp/minmax_{uploaded_file.filename}",
-        "clahe_image_url": ""  # not used in base model
+        "raw_image_url": f"/static/temp/{uploaded_file.filename}",
+        "minmax_image_url": f"/static/temp/minmax_{uploaded_file.filename}",
+        "clahe_image_url": ""
     })
     return jsonify(result)
 
@@ -71,63 +74,55 @@ def verify_enhanced():
     uploaded_file = request.files["signature"]
     writer_id = request.form["writer_id"]
 
-    # Save uploaded file
-    raw_image_path = f"temp/{uploaded_file.filename}"
+    raw_image_path = f"{STATIC_TEMP}/{uploaded_file.filename}"
+    clahe_path = f"{STATIC_TEMP}/clahe_{uploaded_file.filename}"
     uploaded_file.save(raw_image_path)
 
-    # Preprocess uploaded image
+    # Preprocess CLAHE
     processed_clahe = preprocess_signature(raw_image_path, preprocessing_type="clahe")
-    clahe_image_path = f"temp/clahe_{uploaded_file.filename}"
-    cv2.imwrite(clahe_image_path, processed_clahe.squeeze() * 255)
+    cv2.imwrite(clahe_path, processed_clahe.squeeze() * 255)
 
-    # Get embedding from model
-    anchor_embedding = enhanced_model.get_layer("base_network").predict(
-        np.expand_dims(processed_clahe, axis=0)
-    )[0]
+    uploaded_emb = enhanced_model.predict(np.expand_dims(processed_clahe, axis=0), verbose=0)[0].flatten()
 
-    # Find POSITIVE: closest sample from same writer
+    # Positive
     min_pos_dist = float("inf")
     positive_path = None
-
-    for ref in enhanced_reference_embeddings[writer_id]:
-        dist = np.linalg.norm(anchor_embedding - ref["embedding"])
+    for ref_obj in enhanced_reference_embeddings[writer_id]:
+        dist = np.linalg.norm(uploaded_emb - ref_obj["embedding"])
         if dist < min_pos_dist:
             min_pos_dist = dist
-            positive_path = ref["path"]
+            positive_path = ref_obj["path"]
 
-    # Find NEGATIVE: closest sample from any *other* writer
+    # Negative
     min_neg_dist = float("inf")
     negative_path = None
-
-    for other_writer, refs in enhanced_reference_embeddings.items():
+    for other_writer, ref_list in enhanced_reference_embeddings.items():
         if other_writer == writer_id:
             continue
-        for ref in refs:
-            dist = np.linalg.norm(anchor_embedding - ref["embedding"])
+        for ref_obj in ref_list:
+            dist = np.linalg.norm(uploaded_emb - ref_obj["embedding"])
             if dist < min_neg_dist:
                 min_neg_dist = dist
-                negative_path = ref["path"]
+                negative_path = ref_obj["path"]
 
-    # Run classification for base result (optional — reuse your verify_signature)
     result_data = verify_signature(
         claimed_writer_id=writer_id,
         uploaded_signature_path=raw_image_path,
         reference_embeddings=enhanced_reference_embeddings,
-        model=enhanced_model.get_layer("base_network"),
+        model=enhanced_model,
         threshold=0.5
     )
 
-    # Append all images for frontend preview
     result_data.update({
-        "raw_image_url": f"/temp/{uploaded_file.filename}",
-        "clahe_image_url": f"/temp/clahe_{uploaded_file.filename}",
-        "minmax_image_url": "",  # optional
+        "raw_image_url": f"/static/temp/{uploaded_file.filename}",
+        "clahe_image_url": f"/static/temp/clahe_{uploaded_file.filename}",
         "positive_image_url": f"/{positive_path}",
-        "negative_image_url": f"/{negative_path}"
+        "negative_image_url": f"/{negative_path}",
+        "positive_distance": float(round(min_pos_dist, 4)),
+        "negative_distance": float(round(min_neg_dist, 4))
     })
 
     return jsonify(result_data)
-
 
 
 @app.route("/get_writers", methods=["GET"])
@@ -135,13 +130,19 @@ def get_writers():
     dataset_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../dataset/cedar"))
     if not os.path.exists(dataset_path):
         raise FileNotFoundError(f"Dataset path does not exist: {dataset_path}")
-
     writer_ids = sorted([
         folder for folder in os.listdir(dataset_path)
         if os.path.isdir(os.path.join(dataset_path, folder))
     ])
-
     return jsonify(writer_ids)
+
+
+@app.route("/get_writer_counts", methods=["GET"])
+def get_writer_counts():
+    writer_counts = {}
+    for writer_id, refs in enhanced_reference_embeddings.items():
+        writer_counts[writer_id] = len(refs)
+    return jsonify(writer_counts)
 
 
 @app.route("/verify", methods=["POST"])
@@ -149,137 +150,93 @@ def verify_signature_images():
     uploaded_file = request.files["signature"]
     writer_id = request.form["writer_id"]
 
-    file_path = f"temp/{uploaded_file.filename}"
-    uploaded_file.save(file_path)
+    raw_path = f"{STATIC_TEMP}/{uploaded_file.filename}"
+    uploaded_file.save(raw_path)
 
-    # CLAHE
-    clahe_img = preprocess_signature(file_path, preprocessing_type="clahe")
-    cv2.imwrite(f"temp/clahe_{uploaded_file.filename}", clahe_img.squeeze() * 255)
+    clahe_img = preprocess_signature(raw_path, preprocessing_type="clahe")
+    minmax_img = preprocess_signature(raw_path, preprocessing_type="minmax")
 
-    # MinMax
-    minmax_img = preprocess_signature(file_path, preprocessing_type="minmax")
-    cv2.imwrite(f"temp/minmax_{uploaded_file.filename}", minmax_img.squeeze() * 255)
+    clahe_path = f"{STATIC_TEMP}/clahe_{uploaded_file.filename}"
+    minmax_path = f"{STATIC_TEMP}/minmax_{uploaded_file.filename}"
+    cv2.imwrite(clahe_path, clahe_img.squeeze() * 255)
+    cv2.imwrite(minmax_path, minmax_img.squeeze() * 255)
 
     return jsonify({
         "result": "Verification complete!",
-        "raw_image_url": f"/temp/{uploaded_file.filename}",
-        "clahe_image_url": f"/temp/clahe_{uploaded_file.filename}",
-        "minmax_image_url": f"/temp/minmax_{uploaded_file.filename}"
+        "raw_image_url": f"/static/temp/{uploaded_file.filename}",
+        "clahe_image_url": f"/static/temp/clahe_{uploaded_file.filename}",
+        "minmax_image_url": f"/static/temp/minmax_{uploaded_file.filename}"
     })
+
 
 @app.route("/get_triplet_example", methods=["POST"])
 def get_triplet_example():
-    """
-    Return an anchor-positive-negative triplet given the selected writer and uploaded signature.
-    """
-    uploaded_file = request.files["signature"]
-    writer_id = request.form["writer_id"]
+    writer_id = request.form.get("writer_id")
+    file = request.files.get("signature")
+    uploaded_filename = request.form.get("filename")
 
-    # Save uploaded file
-    raw_image_path = f"temp/{uploaded_file.filename}"
-    uploaded_file.save(raw_image_path)
+    if not writer_id or not file:
+        return jsonify({"error": "Missing writer ID or signature file"}), 400
 
-    # Initialize your SignatureDataGenerator with the same config
-    generator = SignatureDataGenerator(
-        dataset={"CEDAR": {
-            "path": "Dataset/CEDAR",  # Or wherever your dataset path is
-            "train_writers": list(range(260, 300))
-        }},
-        img_height=155,
-        img_width=220,
-        batch_sz=1
-    )
+    try:
+        anchor_path = os.path.join(STATIC_TEMP, "anchor_uploaded.png")
+        file.save(anchor_path)
 
-    # Create a synthetic triplet using the uploaded image as anchor
-    triplets = generator.generate_triplets(
-        dataset_path="../Dataset/CEDAR",
-        writer=int(writer_id),
-        use_clahe=True
-    )
+        with open("enhanced_reference_embeddings.pkl", "rb") as f:
+            embeddings = pickle.load(f)
 
-    if not triplets:
-        return jsonify({"error": "Triplet not generated"}), 400
+        if writer_id not in embeddings:
+            return jsonify({"error": "Writer not found"}), 400
 
-    # Save first triplet to temp/
-    anchor, positive, negative = triplets[0]
+        writer_refs = embeddings[writer_id]
+        positive_refs = [r for r in writer_refs if uploaded_filename not in os.path.basename(r["path"])]
+        if len(positive_refs) == 0:
+            print(f"[WARNING] No valid positive reference left after excluding: {uploaded_filename}")
+            return jsonify({"error": "Could not find valid positive sample"}), 400
 
-    anchor_path = f"temp/anchor_{uploaded_file.filename}"
-    positive_path = f"temp/positive_{uploaded_file.filename}"
-    negative_path = f"temp/negative_{uploaded_file.filename}"
+        positive_ref = random.choice(positive_refs)
+        positive_path = positive_ref["path"]
+        positive_emb = positive_ref["embedding"]
 
-    cv2.imwrite(anchor_path, anchor.squeeze() * 255)
-    cv2.imwrite(positive_path, positive.squeeze() * 255)
-    cv2.imwrite(negative_path, negative.squeeze() * 255)
+        all_negatives = []
+        for other_writer, refs in embeddings.items():
+            if other_writer != writer_id:
+                all_negatives.extend(refs)
 
-    return jsonify({
-        "anchor_url": f"/temp/anchor_{uploaded_file.filename}",
-        "positive_url": f"/temp/positive_{uploaded_file.filename}",
-        "negative_url": f"/temp/negative_{uploaded_file.filename}"
-    })
+        negative_ref = min(all_negatives, key=lambda ref: np.linalg.norm(positive_emb - ref["embedding"]))
+        negative_path = negative_ref["path"]
 
-@app.route("/get_triplet_example", methods=["POST"])
-def get_triplet_example():
-    uploaded_file = request.files["signature"]
-    writer_id = request.form["writer_id"]
-    raw_image_path = f"temp/{uploaded_file.filename}"
-    uploaded_file.save(raw_image_path)
+        # Anchor Embedding
+        anchor_img = preprocess_signature(anchor_path)
+        anchor_input = np.expand_dims(anchor_img, axis=0)
+        model_output = enhanced_model.predict([anchor_input]*3, verbose=0)
+        anchor_emb = model_output[0][0]
 
-    generator = SignatureDataGenerator(
-        dataset={"CEDAR": {
-            "path": "Dataset/CEDAR",
-            "train_writers": list(range(260, 300))
-        }},
-        img_height=155,
-        img_width=220,
-        batch_sz=1
-    )
+        ap_dist = float(np.linalg.norm(anchor_emb - positive_emb))
+        an_dist = float(np.linalg.norm(anchor_emb - negative_ref["embedding"]))
 
-    triplets = generator.generate_triplets(
-        dataset_path="Dataset/CEDAR",
-        writer=int(writer_id),
-        use_clahe=True
-    )
+        # Copy to static/temp
+        pos_dest = os.path.join(STATIC_TEMP, os.path.basename(positive_path))
+        neg_dest = os.path.join(STATIC_TEMP, os.path.basename(negative_path))
+        shutil.copy(positive_path, pos_dest)
+        shutil.copy(negative_path, neg_dest)
 
-    if not triplets:
-        return jsonify({"error": "Triplet not generated"}), 400
+        return jsonify({
+            "anchor_url": f"/static/temp/{os.path.basename(anchor_path)}",
+            "positive_url": f"/static/temp/{os.path.basename(positive_path)}",
+            "negative_url": f"/static/temp/{os.path.basename(negative_path)}",
+            "anchor_positive_dist": round(ap_dist, 4),
+            "anchor_negative_dist": round(an_dist, 4),
+        })
 
-    anchor, positive, negative = triplets[0]
+    except Exception as e:
+        print(f"[ERROR] Triplet generation failed: {e}")
+        return jsonify({"error": str(e)}), 500
 
-    # Save triplet images
-    anchor_path = f"temp/anchor_{uploaded_file.filename}"
-    positive_path = f"temp/positive_{uploaded_file.filename}"
-    negative_path = f"temp/negative_{uploaded_file.filename}"
 
-    cv2.imwrite(anchor_path, anchor.squeeze() * 255)
-    cv2.imwrite(positive_path, positive.squeeze() * 255)
-    cv2.imwrite(negative_path, negative.squeeze() * 255)
-
-    # Get embeddings
-    base_model = enhanced_model.get_layer("base_network")
-    a_emb = base_model.predict(np.expand_dims(anchor, axis=0), verbose=0)
-    p_emb = base_model.predict(np.expand_dims(positive, axis=0), verbose=0)
-    n_emb = base_model.predict(np.expand_dims(negative, axis=0), verbose=0)
-
-    # Normalize if necessary
-    a_emb = tf.math.l2_normalize(a_emb, axis=1)
-    p_emb = tf.math.l2_normalize(p_emb, axis=1)
-    n_emb = tf.math.l2_normalize(n_emb, axis=1)
-
-    # Compute distances
-    ap_dist = np.linalg.norm(a_emb - p_emb)
-    an_dist = np.linalg.norm(a_emb - n_emb)
-
-    return jsonify({
-        "anchor_url": f"/temp/anchor_{uploaded_file.filename}",
-        "positive_url": f"/temp/positive_{uploaded_file.filename}",
-        "negative_url": f"/temp/negative_{uploaded_file.filename}",
-        "anchor_positive_dist": round(float(ap_dist), 4),
-        "anchor_negative_dist": round(float(an_dist), 4)
-    })
-
-@app.route("/temp/<filename>")
-def serve_temp_file(filename):
-    return send_file(f"temp/{filename}")
+@app.route('/static/temp/<path:filename>')
+def serve_temp(filename):
+    return send_from_directory(STATIC_TEMP, filename)
 
 
 if __name__ == "__main__":

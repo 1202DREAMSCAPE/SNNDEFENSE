@@ -11,16 +11,20 @@ enable_unsafe_deserialization()
 def get_reference_signatures(dataset_path):
     reference_signatures = {}
     cedar_path = os.path.join(dataset_path, "cedar")
+    
     for writer_folder in os.listdir(cedar_path):
         writer_dir = os.path.join(cedar_path, writer_folder)
         if os.path.isdir(writer_dir):
             genuine_dir = os.path.join(writer_dir, "genuine")
             if os.path.exists(genuine_dir):
-                genuine_signatures = os.listdir(genuine_dir)
-                if genuine_signatures:
-                    reference_signature_path = os.path.join(genuine_dir, genuine_signatures[0])
-                    reference_signatures[writer_folder] = reference_signature_path
+                signature_paths = []
+                for fname in os.listdir(genuine_dir):
+                    if fname.lower().endswith((".png", ".jpg", ".jpeg")):
+                        signature_paths.append(os.path.join(genuine_dir, fname))
+                if signature_paths:
+                    reference_signatures[writer_folder] = signature_paths
     return reference_signatures
+
 
 @register_keras_serializable()
 def l2_normalize_layer(x):
@@ -42,9 +46,10 @@ def triplet_loss(margin=1):
     return loss
 
 # Step 1: Define paths for the dataset and weights directory
-dataset_path = "../dataset"
-enhanced_weights_dir = "../enhanced_weights"
-base_weights_dir = "../models"
+dataset_path = os.path.join(os.path.dirname(__file__), "../../Dataset")
+enhanced_weights_dir = os.path.join(os.path.dirname(__file__), "../../enhanced_weights")
+base_weights_dir = os.path.join(os.path.dirname(__file__), "../../models")
+
 
 # Step 2: Automatically build the reference_signatures dictionary
 reference_signatures = get_reference_signatures(dataset_path)
