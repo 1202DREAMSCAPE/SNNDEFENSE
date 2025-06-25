@@ -1,113 +1,269 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Signature Verification</title>
-    <link rel="stylesheet" href="/static/styles.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Signature Verification</title>
+  <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body>
-    <h1>Signature Verification System</h1>
+<body class="bg-gray-50 text-gray-800 min-h-screen p-6">
+
+  <div class="max-w-5xl mx-auto space-y-8">
+    <h1 class="text-3xl font-bold text-center text-blue-700">Signature Verification System</h1>
 
     <!-- Base Model Form -->
-    <form method="POST" enctype="multipart/form-data" action="/base" id="base-form">
-        <h2>Base Model (MinMax Preprocessing)</h2>
-        <label for="writer_id_base">Select Writer ID:</label>
-        <select id="writer_id_base" name="writer_id" class="writer-dropdown" required>
-            <option value="" disabled selected>Select a writer</option>
-        </select>
-        
-        <label for="signature_base">Upload Signature:</label>
-        <input type="file" id="signature_base" name="signature" accept="image/*" required onchange="previewFile(this, 'raw-preview-base')">
-        
-        <img id="raw-preview-base" style="display:none; max-width: 200px; margin-top: 10px;" alt="Raw Image Preview">
-        
-        <button type="submit">Verify with Base Model</button>
+    <form id="base-form" method="POST" enctype="multipart/form-data" action="/base" class="bg-white rounded-lg shadow-md p-6 space-y-4">
+      <h2 class="text-xl font-semibold text-blue-600">Base Model (MinMax Preprocessing)</h2>
+
+      <label class="block text-sm font-medium">Select Writer ID:</label>
+      <select id="writer_id_base" name="writer_id" required class="writer-dropdown w-full p-2 border border-gray-300 rounded">
+        <option value="" disabled selected>Select a writer</option>
+      </select>
+
+      <label class="block text-sm font-medium">Upload Signature:</label>
+      <input type="file" id="signature_base" name="signature" accept="image/*" required onchange="previewFile(this, 'raw-preview-base')" class="w-full p-2 border border-gray-300 rounded"/>
+
+      <img id="raw-preview-base" class="hidden max-w-xs mt-3 rounded border border-gray-200" alt="Raw Image Preview"/>
+
+      <button id="base-btn" type="submit" class="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-2">
+        <svg id="base-spinner" class="hidden animate-spin h-5 w-5 text-white" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor"
+            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z">
+          </path>
+        </svg>
+        Verify with Base Model
+      </button>
     </form>
 
     <!-- Enhanced Model Form -->
-    <form method="POST" enctype="multipart/form-data" action="/enhanced" id="enhanced-form">
-        <h2>Enhanced Model (CLAHE Preprocessing)</h2>
-        <label for="writer_id_enhanced">Select Writer ID:</label>
-        <select id="writer_id_enhanced" name="writer_id" class="writer-dropdown" required>
-            <option value="" disabled selected>Select a writer</option>
-        </select>
-        
-        <label for="signature_enhanced">Upload Signature:</label>
-        <input type="file" id="signature_enhanced" name="signature" accept="image/*" required onchange="previewFile(this, 'raw-preview-enhanced')">
-        
-        <img id="raw-preview-enhanced" style="display:none; max-width: 200px; margin-top: 10px;" alt="Raw Image Preview">
-        
-        <button type="submit">Verify with Enhanced Model</button>
+    <form id="enhanced-form" method="POST" enctype="multipart/form-data" action="/enhanced" class="bg-white rounded-lg shadow-md p-6 space-y-4">
+      <h2 class="text-xl font-semibold text-green-600">Enhanced Model (CLAHE Preprocessing)</h2>
+
+      <label class="block text-sm font-medium">Select Writer ID:</label>
+      <select id="writer_id_enhanced" name="writer_id" required class="writer-dropdown w-full p-2 border border-gray-300 rounded">
+        <option value="" disabled selected>Select a writer</option>
+      </select>
+
+      <label class="block text-sm font-medium">Upload Signature:</label>
+      <input type="file" id="signature_enhanced" name="signature" accept="image/*" required onchange="previewFile(this, 'raw-preview-enhanced')" class="w-full p-2 border border-gray-300 rounded"/>
+
+      <img id="raw-preview-enhanced" class="hidden max-w-xs mt-3 rounded border border-gray-200" alt="Raw Image Preview"/>
+
+      <button id="enhanced-btn" type="submit" class="mt-4 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 flex items-center gap-2">
+        <svg id="enhanced-spinner" class="hidden animate-spin h-5 w-5 text-white" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor"
+            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z">
+          </path>
+        </svg>
+        Verify with Enhanced Model
+      </button>   
+      <button type="button" onclick="openTripletModal()" class="mt-2 px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700">
+        Find Triplet
+      </button>         
     </form>
 
-    <!-- Results Section -->
-        <div id="results" style="margin-top: 20px;">
-        <h2>Verification Results</h2>
-        <p id="result-text"></p>
-        <img id="raw-preview" style="display:none; max-width: 200px; margin-top: 10px;" alt="Raw Image">
-        <img id="clahe-preview" style="display:none; max-width: 200px; margin-top: 10px;" alt="CLAHE Enhanced Image">
-        <img id="minmax-preview" style="display:none; max-width: 200px; margin-top: 10px;" alt="MinMax Preprocessed Image">
+    <button type="button" onclick="requestTripletExample()" class="mt-2 px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700">
+        🔍 Show Triplet Sample
+      </button>
+
+<!-- Triplet Modal -->
+<div id="triplet-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden justify-center items-center z-50">
+    <div class="bg-white rounded-lg p-6 max-w-4xl mx-auto relative">
+      <button onclick="closeTripletModal()" class="absolute top-2 right-2 text-gray-500 hover:text-black">✖</button>
+      <h2 class="text-lg font-semibold text-center mb-4">Triplet Visualization</h2>
+  
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div>
+          <img id="anchor-img" class="hidden rounded border" />
+          <p class="text-sm text-center mt-2">Anchor (Uploaded)</p>
+        </div>
+        <div>
+          <img id="positive-img" class="hidden rounded border" />
+          <p class="text-sm text-center mt-2">Closest Match (Positive)</p>
+        </div>
+        <div>
+          <img id="negative-img" class="hidden rounded border" />
+          <p class="text-sm text-center mt-2">Closest Imposter (Negative)</p>
+        </div>
+      </div>
     </div>
-</body>
+  </div>
+  
+    <!-- Results Section -->
+    <div id="results" class="bg-white rounded-lg shadow-md p-6 hidden">
+        <div class="text-center mt-6">
+            <button id="reset-btn" class="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600">
+              🔄 Restart / Reset
+            </button>
+          </div>
+          
+      <h2 class="text-xl font-semibold text-purple-700">Verification Results</h2>
+      <p id="result-text" class="mt-2 text-lg font-medium text-gray-700"></p>
 
-<script>
-    // Fetch writer IDs from the backend and populate the dropdown
+      <div id="image-results" class="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-6 text-center">
+        <div>
+          <img id="raw-preview" class="hidden w-full rounded border border-gray-300" alt="Raw Image"/>
+          <p id="raw-label" class="hidden mt-2 text-sm text-gray-500">Raw Uploaded Image</p>
+        </div>
+        <div>
+          <img id="clahe-preview" class="hidden w-full rounded border border-gray-300" alt="CLAHE Enhanced"/>
+          <p id="clahe-label" class="hidden mt-2 text-sm text-gray-500">CLAHE Enhanced Image</p>
+        </div>
+        <div>
+          <img id="minmax-preview" class="hidden w-full rounded border border-gray-300" alt="MinMax Normalized"/>
+          <p id="minmax-label" class="hidden mt-2 text-sm text-gray-500">MinMax Normalized Image</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function openTripletModal() {
+    document.getElementById("triplet-modal").classList.remove("hidden");
+    }
+
+    function closeTripletModal() {
+    document.getElementById("triplet-modal").classList.add("hidden");
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      populateWriterDropdown();
+    });
+
+    function showTripletImages(anchorURL, positiveURL, negativeURL) {
+        const a = document.getElementById("anchor-img");
+        const p = document.getElementById("positive-img");
+        const n = document.getElementById("negative-img");
+      
+        a.src = anchorURL;
+        p.src = positiveURL;
+        n.src = negativeURL;
+      
+        a.classList.remove("hidden");
+        p.classList.remove("hidden");
+        n.classList.remove("hidden");
+      
+        openTripletModal();
+      }
+      
+  
     async function populateWriterDropdown() {
-        const response = await fetch('/get_writers');
-        const writerIds = await response.json();
-        const dropdowns = document.querySelectorAll('.writer-dropdown');
-
-        dropdowns.forEach(dropdown => {
-            writerIds.forEach(writerId => {
-                const option = document.createElement('option');
-                option.value = writerId;
-                option.textContent = writerId;
-                dropdown.appendChild(option);
-            });
+      const response = await fetch('/get_writers');
+      const writerIds = await response.json();
+      writerIds.sort();
+  
+      const dropdowns = [document.getElementById("writer_id_base"), document.getElementById("writer_id_enhanced")];
+      dropdowns.forEach(dropdown => {
+        writerIds.forEach(writerId => {
+          const option = document.createElement('option');
+          option.value = writerId;
+          option.textContent = writerId;
+          dropdown.appendChild(option);
         });
+      });
     }
-
+  
+    function previewFile(input, previewId) {
+      const file = input.files[0];
+      const reader = new FileReader();
+      reader.onload = e => {
+        const preview = document.getElementById(previewId);
+        preview.src = e.target.result;
+        preview.classList.remove('hidden');
+      };
+      if (file) reader.readAsDataURL(file);
+    }
+  
+    function toggleLoading(state, model) {
+      const button = document.getElementById(`${model}-btn`);
+      const spinner = document.getElementById(`${model}-spinner`);
+      button.disabled = state;
+      spinner.classList.toggle("hidden", !state);
+    }
+  
     async function handleVerificationResponse(response) {
-        const data = await response.json();
-    
-        // Update result text
-        document.getElementById("result-text").textContent = data.result;
-    
-        // Display raw image
-        const rawPreview = document.getElementById("raw-preview");
-        rawPreview.src = data.raw_image_url;
-        rawPreview.style.display = "block";
-    
-        // Display CLAHE-enhanced image
-        const clahePreview = document.getElementById("clahe-preview");
-        clahePreview.src = data.clahe_image_url;
-        clahePreview.style.display = "block";
-    
-        // Display MinMax-preprocessed image
-        const minmaxPreview = document.getElementById("minmax-preview");
-        minmaxPreview.src = data.minmax_image_url;
-        minmaxPreview.style.display = "block";
-    }
-
-    // Preview the uploaded file
-    function previewFile(input, previewElementId) {
-        const file = input.files[0];
-        const reader = new FileReader();
-
-        reader.onload = function (e) {
-            const previewElement = document.getElementById(previewElementId);
-            previewElement.src = e.target.result;
-            previewElement.style.display = "block";
-        };
-
-        if (file) {
-            reader.readAsDataURL(file);
+      const data = await response.json();
+      document.getElementById("results").classList.remove("hidden");
+  
+      document.getElementById("result-text").innerHTML = `
+        ✅ <strong>Result:</strong> ${data.result}<br>
+        🖋️ <strong>Distance:</strong> ${data.distance.toFixed(4)}<br>
+        🎯 <strong>Threshold:</strong> ${data.threshold.toFixed(4)}<br>
+        📊 <strong>Confidence:</strong> ${data.confidence.toFixed(2)}
+      `;
+  
+      const previews = {
+        raw: "raw-preview",
+        clahe: "clahe-preview",
+        minmax: "minmax-preview"
+      };
+  
+      for (const type in previews) {
+        const img = document.getElementById(previews[type]);
+        const label = document.getElementById(`${type}-label`);
+        const url = data[`${type}_image_url`];
+  
+        if (url) {
+          img.src = url;
+          img.classList.remove("hidden");
+          label.classList.remove("hidden");
+        } else {
+          img.classList.add("hidden");
+          label.classList.add("hidden");
         }
+      }
     }
 
-    // Populate dropdowns when the page loads
-    window.onload = populateWriterDropdown;
-</script>
-
+    async function requestTripletExample() {
+        const form = document.getElementById("enhanced-form");
+        const formData = new FormData(form);
+      
+        const response = await fetch("/get_triplet_example", {
+          method: "POST",
+          body: formData,
+        });
+      
+        const data = await response.json();
+      
+        if (data.anchor_url && data.positive_url && data.negative_url) {
+          showTripletImages(data.anchor_url, data.positive_url, data.negative_url);
+        } else {
+          alert("⚠ Could not generate triplet example.");
+        }
+      }
+      
+  
+    document.getElementById("base-form").addEventListener("submit", async e => {
+      e.preventDefault();
+      toggleLoading(true, "base");
+      const formData = new FormData(e.target);
+      const response = await fetch("/base", { method: "POST", body: formData });
+      await handleVerificationResponse(response);
+      toggleLoading(false, "base");
+    });
+  
+    document.getElementById("enhanced-form").addEventListener("submit", async e => {
+      e.preventDefault();
+      toggleLoading(true, "enhanced");
+      const formData = new FormData(e.target);
+      const response = await fetch("/enhanced", { method: "POST", body: formData });
+      await handleVerificationResponse(response);
+      toggleLoading(false, "enhanced");
+    });
+  
+    document.getElementById("reset-btn").addEventListener("click", () => {
+      document.getElementById("base-form").reset();
+      document.getElementById("enhanced-form").reset();
+      document.getElementById("results").classList.add("hidden");
+  
+      const previews = ["raw-preview-base", "raw-preview-enhanced", "raw-preview", "clahe-preview", "minmax-preview"];
+      const labels = ["raw-label", "clahe-label", "minmax-label"];
+      previews.forEach(id => document.getElementById(id).classList.add("hidden"));
+      labels.forEach(id => document.getElementById(id).classList.add("hidden"));
+    });
+  </script>
+  
+</body>
 </html>

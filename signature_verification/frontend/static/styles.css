@@ -46,3 +46,47 @@ button {
 button:hover {
     background-color: #0056b3;
 }
+
+#results {
+    margin-top: 30px;
+    padding: 20px;
+    border: 2px solid #ccc;
+    border-radius: 12px;
+    background: #f8f8f8;
+    max-width: 500px;
+    font-family: Arial, sans-serif;
+}
+
+.result-box {
+    padding: 15px;
+    border-radius: 10px;
+    font-size: 16px;
+    margin-bottom: 10px;
+}
+
+.result-box.success {
+    background-color: #e7f7ec;
+    border: 1px solid #4caf50;
+    color: #2e7d32;
+}
+
+.result-box.fail {
+    background-color: #ffe8e6;
+    border: 1px solid #f44336;
+    color: #c62828;
+}
+
+.result-metrics {
+    margin-top: 10px;
+}
+
+.result-metrics div {
+    margin-bottom: 6px;
+    font-size: 15px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.result-metrics .icon {
+    font-size: 18px;
+}

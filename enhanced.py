@@ -15,6 +15,8 @@ import seaborn as sns
 import umap
 import csv
 import sys
+from tensorflow.keras.saving import register_keras_serializable
+
 run_id = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 np.random.seed(1337)
 random.seed(1337)
@@ -52,6 +54,7 @@ def create_base_network(input_shape):
     ], name="base_network")
     return model
 
+@register_keras_serializable(package="Custom")
 def triplet_loss(margin=1):
     def loss(y_true, y_pred):  # y_pred has shape (batch_size, 3, embedding_dim)
         anchor = y_pred[:, 0]
@@ -62,6 +65,14 @@ def triplet_loss(margin=1):
         neg_dist = tf.reduce_sum(tf.square(anchor - negative), axis=1)
         return tf.reduce_mean(tf.maximum(pos_dist - neg_dist + margin, 0.0))
     return loss
+
+@register_keras_serializable()
+def l2_normalize_layer(x):
+    return tf.math.l2_normalize(x, axis=1)
+
+@register_keras_serializable()
+def stack_triplet(x):
+    return tf.stack(x, axis=1)
 
 def build_triplet_network(input_shape):
     """
@@ -80,24 +91,13 @@ def build_triplet_network(input_shape):
     encoded_negative = base_network(negative_input)
 
     # L2 normalization for embeddings
-    encoded_anchor = layers.Lambda(
-        lambda x: tf.math.l2_normalize(x, axis=1),
-        output_shape=lambda input_shape: input_shape
-    )(encoded_anchor)
-    encoded_positive = layers.Lambda(
-        lambda x: tf.math.l2_normalize(x, axis=1),
-        output_shape=lambda input_shape: input_shape
-    )(encoded_positive)
-    encoded_negative = layers.Lambda(
-        lambda x: tf.math.l2_normalize(x, axis=1),
-        output_shape=lambda input_shape: input_shape
-    )(encoded_negative)
+    encoded_anchor = layers.Lambda(l2_normalize_layer, output_shape=(128,))(encoded_anchor)
+    encoded_positive = layers.Lambda(l2_normalize_layer, output_shape=(128,))(encoded_positive)
+    encoded_negative = layers.Lambda(l2_normalize_layer, output_shape=(128,))(encoded_negative)
 
     # Stack embeddings into a single tensor (batch_size, 3, embedding_dim)
-    merged_output = layers.Lambda(
-        lambda x: tf.stack(x, axis=1),
-        output_shape=lambda input_shapes: (input_shapes[0][0], 3, input_shapes[0][1])
-    )([encoded_anchor, encoded_positive, encoded_negative])
+    merged_output = layers.Lambda(stack_triplet, output_shape=(3, 128))([encoded_anchor, encoded_positive, encoded_negative])
+
 
     # Create the triplet model
     model = Model(inputs=[anchor_input, positive_input, negative_input], outputs=merged_output)

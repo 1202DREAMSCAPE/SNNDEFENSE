@@ -1,5 +1,7 @@
 from sklearn.metrics import roc_curve, f1_score
 import numpy as np
+from preprocess import preprocess_signature
+
 
 def calculate_youden_j_threshold(distances, labels):
     """
@@ -25,7 +27,7 @@ def calculate_f1_threshold(distances, labels):
 
     return best_thr
 
-def verify_signature(claimed_writer_id, uploaded_signature_path, reference_embeddings, model, threshold_type="youden", threshold=0.5):
+def verify_signature(claimed_writer_id, uploaded_signature_path, reference_embeddings, model, threshold=0.5):
     """
     Verify the authenticity of a signature using the specified thresholding method.
     - threshold_type: "youden" for Youden's J statistic (base model), "f1" for F1-thresholding (enhanced model).
@@ -44,18 +46,18 @@ def verify_signature(claimed_writer_id, uploaded_signature_path, reference_embed
     # Calculate the distance between embeddings
     distance = np.linalg.norm(reference_emb - uploaded_emb)
     
-    # Dynamically calculate the threshold if needed
-    if threshold_type == "youden":
-        threshold = calculate_youden_j_threshold(distances, labels)  # Replace `distances` and `labels` with actual data
-    elif threshold_type == "f1":
-        threshold = calculate_f1_threshold(distances, labels)  # Replace `distances` and `labels` with actual data
+    # # Dynamically calculate the threshold if needed
+    # if threshold_type == "youden":
+    #     threshold = calculate_youden_j_threshold(distances, labels)  # Replace `distances` and `labels` with actual data
+    # elif threshold_type == "f1":
+    #     threshold = calculate_f1_threshold(distances, labels)  # Replace `distances` and `labels` with actual data
     
     # Compare distance against threshold
     is_authentic = distance <= threshold
     
     return {
-        "result": "Genuine" if is_authentic else "Forged",
-        "distance": distance,
-        "threshold": threshold,
-        "confidence": 1 - (distance / threshold) if is_authentic else distance / threshold
+    "result": "Genuine" if is_authentic else "Forged",
+    "distance": float(distance),
+    "threshold": float(threshold),
+    "confidence": float(1 - (distance / threshold)) if is_authentic else float(distance / threshold)
     }
