@@ -7,4 +7,4 @@ opencv-python
 seaborn
 umap-learn
 scikit-image
-
+flask

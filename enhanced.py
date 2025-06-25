@@ -83,317 +83,96 @@ def build_triplet_network(input_shape):
     encoded_negative = base_network(negative_input)
 
     # L2 normalization for embeddings
-    encoded_anchor = layers.Lambda(lambda x: tf.math.l2_normalize(x, axis=1))(encoded_anchor)
-    encoded_positive = layers.Lambda(lambda x: tf.math.l2_normalize(x, axis=1))(encoded_positive)
-    encoded_negative = layers.Lambda(lambda x: tf.math.l2_normalize(x, axis=1))(encoded_negative)
+    encoded_anchor = layers.Lambda(
+        lambda x: tf.math.l2_normalize(x, axis=1),
+        output_shape=lambda input_shape: input_shape
+    )(encoded_anchor)
+    encoded_positive = layers.Lambda(
+        lambda x: tf.math.l2_normalize(x, axis=1),
+        output_shape=lambda input_shape: input_shape
+    )(encoded_positive)
+    encoded_negative = layers.Lambda(
+        lambda x: tf.math.l2_normalize(x, axis=1),
+        output_shape=lambda input_shape: input_shape
+    )(encoded_negative)
 
     # Stack embeddings into a single tensor (batch_size, 3, embedding_dim)
-    merged_output = layers.Lambda(lambda x: tf.stack(x, axis=1))(
-        [encoded_anchor, encoded_positive, encoded_negative]
-    )
+    merged_output = layers.Lambda(
+        lambda x: tf.stack(x, axis=1),
+        output_shape=lambda input_shapes: (input_shapes[0][0], 3, input_shapes[0][1])
+    )([encoded_anchor, encoded_positive, encoded_negative])
 
     # Create the triplet model
     model = Model(inputs=[anchor_input, positive_input, negative_input], outputs=merged_output)
     return model
 
-def evaluate_classification_metrics(y_true, distances, dataset_name=None, output_dir="outputs/enhanced"):
-    """
-    Evaluate binary classification metrics using F1-optimal threshold.
-    """
-    # Normalize distances to similarity scores
-    scores = 1 - distances / np.max(distances)
+if __name__ == "__main__":
+    # Parameters
+    BATCH_SIZE = 128
+    EPOCHS = 5
+    IMG_SHAPE = (155, 220, 1)
+    weights_dir = 'enhanced_weights'
+    metrics_dir = 'outputs/enhanced'
+    os.makedirs(weights_dir, exist_ok=True)
+    os.makedirs(metrics_dir, exist_ok=True)
 
-    # --- F1-Optimal Threshold selection ---
-    best_threshold = 0.0
-    best_f1 = 0.0
-    thresholds = np.linspace(0, 1, 2001)
-
-    for thresh in thresholds:
-        y_pred_temp = (scores >= thresh).astype(int)
-        f1 = f1_score(y_true, y_pred_temp, zero_division=0)
-        if f1 > best_f1:
-            best_f1 = f1
-            best_threshold = thresh
-
-    f1_threshold = best_threshold
-    
-    y_pred = (scores >= f1_threshold).astype(int)
-
-    # Confusion matrix
-    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
-    tn, fp, fn, tp = cm.ravel() if cm.shape == (2, 2) else (0, 0, 0, 0)
-
-    # metric calculations
-    acc = accuracy_score(y_true, y_pred)
-    far = fp / (fp + tn + 1e-6)
-    frr = fn / (fn + tp + 1e-6)
-    tpr = tp / (tp + fn + 1e-6)
-    tnr = tn / (tn + fp + 1e-6)
-    f1 = f1_score(y_true, y_pred, zero_division=0)
-    try:
-        rocauc = roc_auc_score(y_true, scores)
-    except Exception:
-        rocauc = float('nan')
-
-    # Save metrics
-    if dataset_name:
-        os.makedirs(output_dir, exist_ok=True)
-        filepath = os.path.join(output_dir, f"{dataset_name}_run{run_id}_metrics.txt")
-        with open(filepath, "w") as f:
-            f.write(f"Evaluation Metrics for {dataset_name}\n")
-            f.write("="*40 + "\n")
-            f.write(f"Accuracy       : {acc:.4f}\n")
-            f.write(f"F1-score       : {f1:.4f}\n")
-            f.write(f"ROC AUC        : {rocauc:.4f}\n")
-            f.write(f"FAR (FP Rate)  : {far:.4f}\n")
-            f.write(f"FRR (FN Rate)  : {frr:.4f}\n")
-            f.write(f"TPR: {tpr:.4f}\n")
-            f.write(f"TNR: {tnr:.4f}\n")
-        print(f"📝 Metrics saved to {filepath}")
-
-    return {
-        "accuracy": acc,
-        "f1": f1,
-        "rocauc": rocauc,
-        "far": far,
-        "frr": frr,
-        "tpr": tpr,
-        "tnr": tnr
+    datasets = {
+        "CEDAR": {
+            "path": "Dataset/CEDAR",
+            "train_writers": list(range(260, 300)),
+            "test_writers": list(range(300, 315))
+        },
+        "BHSig260_Bengali": {
+            "path": "Dataset/BHSig260_Bengali",
+            "train_writers": list(range(1, 71)),
+            "test_writers": list(range(71, 101))
+        },
+        "BHSig260_Hindi": {
+            "path": "Dataset/BHSig260_Hindi",
+            "train_writers": list(range(101, 191)),
+            "test_writers": list(range(191, 260))
+        }
     }
 
-def compute_distance_distributions(model, generator, dataset_name, base_output_dir="outputs/enhanced", max_samples=5000):
-    """
-    Compute and visualize distance distributions and UMAP embeddings for enhanced.py.
-    """
-    output_dir = os.path.join(base_output_dir, dataset_name)
-    os.makedirs(output_dir, exist_ok=True)
+    results_csv_path = "outputs/enhanced/results.csv"
 
-    # Step 1: Get unbatched test data
-    X_test, y_test = generator.get_unbatched_data()
-    X_test = np.array(X_test)
-    y_test = np.array(y_test)
-
-    # Step 2: Extract embeddings from base model
-    base_model = model.get_layer("base_network")
-    embeddings = base_model.predict(X_test, batch_size=128, verbose=0)
-
-    # Step 3: Compute distances
-    intra_dists, inter_dists, seen = [], [], 0
-    for i in range(len(embeddings)):
-        for j in range(i + 1, len(embeddings)):
-            if seen >= max_samples:
-                break
-            dist = np.linalg.norm(embeddings[i] - embeddings[j])
-            if y_test[i] == y_test[j]:
-                intra_dists.append(dist)
-            else:
-                inter_dists.append(dist)
-            seen += 1
-
-    # Step 4: Histogram plot
-    plt.figure(figsize=(8, 5))
-    sns.histplot(intra_dists, label='Genuine-Genuine', color='blue', kde=True, stat="density", bins=50)
-    sns.histplot(inter_dists, label='Genuine-Forged', color='red', kde=True, stat="density", bins=50)
-    plt.title(f'Distance Distribution - {dataset_name}')
-    plt.xlabel('Euclidean Distance')
-    plt.ylabel('Density')
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f"{dataset_name}_run{run_id}_distance_distribution.png"))
-    plt.close()
-
-    # Step 5: UMAP visualization
-    reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, metric='euclidean')
-    embedding_2d = reducer.fit_transform(embeddings)
-    plt.figure(figsize=(8, 6))
-    scatter = plt.scatter(embedding_2d[:, 0], embedding_2d[:, 1], c=y_test, cmap='tab20', s=10)
-    plt.colorbar(scatter, label="Writer ID")
-    plt.title(f'UMAP of Embeddings - {dataset_name}')
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f"{dataset_name}_run{run_id}_umap.png"))
-    plt.close()
-
-    # Step 6: Save stats
-    stats_path = os.path.join(output_dir, "distance_stats.txt")
-    with open(stats_path, "w") as f:
-        f.write(f"Intra-class: mean={np.mean(intra_dists):.4f}, std={np.std(intra_dists):.4f}\n")
-        f.write(f"Inter-class: mean={np.mean(inter_dists):.4f}, std={np.std(inter_dists):.4f}\n")
-
-    print(f"📊 Distance Distribution Outputs saved to {output_dir}")
-
-def plot_image_comparison(original, normalized, filename, dataset_name):
-    output_dir = os.path.join("outputs/visualizations_clahe", dataset_name)
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Create side-by-side comparison plot
-    fig, axes = plt.subplots(1, 2, figsize=(8, 4))
-    axes[0].imshow(original, cmap='gray')
-    axes[0].set_title("Original")
-    axes[0].axis("off")
-
-    axes[1].imshow(normalized, cmap='gray')
-    axes[1].set_title("CLAHE")
-    axes[1].axis("off")
-
-    plt.tight_layout()
-    
-    # Save image to the correct dataset-specific path
-    plt.savefig(os.path.join(output_dir, f"{filename}_comparison_enhanced.png"))
-    plt.close()
-
-def generate_sop1_outputs(generator, save_path="outputs/enhanced"):
-    max_visualizations = 5
-
-    for dataset_path, writer in generator.test_writers:
-        for label_type in ["genuine", "forged"]:
-            img_dir = os.path.join(dataset_path, f"writer_{writer:03d}", label_type)
-            if not os.path.exists(img_dir):
-                continue
-
-            img_files = [f for f in os.listdir(img_dir) if f.lower().endswith((".jpg", ".png")) and not f.startswith(".")]
-            if len(img_files) < 1:
-                continue
-
-            # Visualize only a few
-            visualize_set = set(random.sample(img_files, min(max_visualizations, len(img_files))))
-
-            for fname in img_files:
-                img_path = os.path.join(img_dir, fname)
-                original = generator.preprocess_image(img_path)  # Original preprocessing
-                clahe_img = generator.preprocess_image_clahe(img_path)  # CLAHE preprocessing
-
-                # Only visualize selected images
-                if fname in visualize_set:
-                    filename = f"writer{writer}_{label_type}_{os.path.splitext(fname)[0]}"
-                    plot_image_comparison(original.squeeze(), clahe_img.squeeze(), filename + "_clahe", generator.dataset_name)
-
-    print(f"\n✅ visualizations generated and saved to {save_path}")
-
-
-# Parameters
-BATCH_SIZE = 128
-EPOCHS = 5
-IMG_SHAPE = (155, 220, 1)  
-weights_dir = 'enhanced_weights'
-metrics_dir = 'outputs/enhanced'
-os.makedirs(weights_dir, exist_ok=True)
-os.makedirs(metrics_dir, exist_ok=True)
-
-datasets = {
-    "CEDAR": {
-        "path": "Dataset/CEDAR",
-        "train_writers": list(range(260, 300)),
-        "test_writers": list(range(300, 315))
-    },
-    "BHSig260_Bengali": {
-        "path": "Dataset/BHSig260_Bengali",
-        "train_writers": list(range(1, 71)),
-        "test_writers": list(range(71, 101))
-    },
-    "BHSig260_Hindi": {
-        "path": "Dataset/BHSig260_Hindi",
-        "train_writers": list(range(101, 191)),
-        "test_writers": list(range(191, 260))
-    }
-}
-
-os.makedirs("outputs/enhanced", exist_ok=True)
-# Define the path for the results CSV file
-results_csv_path = "outputs/enhanced/results.csv"
-
-# Ensure the CSV file has a header if it doesn't exist
-if not os.path.exists(results_csv_path):
-    with open(results_csv_path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["Dataset", "Accuracy", "F1 Score", "ROC-AUC", "FAR", "FRR", "TPR", "TNR"])
-
-results = []
-
-for dataset_name, config in datasets.items():
-    print(f"\n📦 Processing Enhanced Model for Dataset: {dataset_name}")
-
-    # Load data generator
-    generator = SignatureDataGenerator(
-        dataset={dataset_name: config},
-        img_height=IMG_SHAPE[0],
-        img_width=IMG_SHAPE[1],
-        batch_sz=BATCH_SIZE,
-    )
-
-    # Load triplet data
-    train_dataset = generator.get_triplet_train(use_clahe=True,
-                                                log_csv_path=f"outputs/logs/{dataset_name}_run{run_id}__triplets.csv")
-
-    # Build model (triplet loss version)
-    model = build_triplet_network(IMG_SHAPE)
-    model.compile(optimizer=Adam(learning_rate=0.0001), loss=triplet_loss(margin=1))
-
-    # ========== Training ==========
-    print("🧠 Starting training with triplet loss ...")
-    history = model.fit(
-        train_dataset,
-        steps_per_epoch=len(generator.train_writers),
-        epochs=EPOCHS,
-        verbose=2
-    )
-
-    # Save the model weights
-    enhanced_weights_path = f"{weights_dir}/{dataset_name}_run{run_id}.weights.h5"
-    model.save_weights(enhanced_weights_path)
-    print(f"✅ Enhanced model weights saved to: {enhanced_weights_path}")
-
-    base_net_path = f"{weights_dir}/{dataset_name}_base_run{run_id}.weights.h5"
-    base_net = model.get_layer('base_network')
-    base_net.save_weights(base_net_path)
-    print(f"✅ Base network weights saved to: {base_net_path}")
-
-    print(f"\n🔍 Running Evaluation for {dataset_name}")
-
-    test_pairs, test_labels = generator.generate_pairs(split='test', use_clahe=True)
-    test_img1 = np.array([pair[0] for pair in test_pairs])
-    test_img2 = np.array([pair[1] for pair in test_pairs])
-    test_labels = np.array(test_labels)
-
-    print("Label Distribution:", dict(zip(*np.unique(test_labels, return_counts=True))))
-    if len(np.unique(test_labels)) < 2:
-        print("⚠ Skipping evaluation — only one class present.")
-    else:
-        # Load the saved embedding model for inference
-        embedding_model = create_base_network(IMG_SHAPE)
-        embedding_model.load_weights(f"{weights_dir}/{dataset_name}_base_run{run_id}.weights.h5")
-        print(f"✅ Loaded embedding weights from {weights_dir}/{dataset_name}_base_run{run_id}.weights.h5")
-
-        # Generate embeddings
-        emb1 = embedding_model.predict(test_img1, batch_size=128)
-        emb2 = embedding_model.predict(test_img2, batch_size=128)
-
-        # Save reference embeddings
-        reference_embeddings_path = f"{weights_dir}/{dataset_name}_reference_embeddings_run{run_id}.npy"
-        np.save(reference_embeddings_path, emb1)
-        print(f"✅ Reference embeddings saved to: {reference_embeddings_path}")
-        # Save reference labels
-        reference_labels_path = f"{weights_dir}/{dataset_name}_reference_labels_run{run_id}.npy"
-        np.save(reference_labels_path, test_labels)
-        print(f"✅ Reference labels    saved to: {reference_labels_path}")
-
-        distances = np.linalg.norm(emb1 - emb2, axis=1)
-        metrics = evaluate_classification_metrics(test_labels, distances, dataset_name=dataset_name)
-        results.append((dataset_name, metrics))
-        compute_distance_distributions(model, generator, dataset_name)
-        generate_sop1_outputs(generator, save_path=metrics_dir)
-        print(f"✅ Evaluation Complete for {dataset_name}")
-
-        # Save results to CSV
-        with open(results_csv_path, "a", newline="") as f:
+    # Ensure the CSV file has a header if it doesn't exist
+    if not os.path.exists(results_csv_path):
+        with open(results_csv_path, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow([
-                dataset_name,
-                metrics["accuracy"],
-                metrics["f1"],
-                metrics["rocauc"],
-                metrics["far"],
-                metrics["frr"],
-                metrics["tpr"],
-                metrics["tnr"]
-            ])
-        print(f"✅ Results saved for {dataset_name}")
+            writer.writerow(["Dataset", "Accuracy", "F1 Score", "ROC-AUC", "FAR", "FRR", "TPR", "TNR"])
+
+    results = []
+
+    for dataset_name, config in datasets.items():
+        print(f"\n📦 Processing Enhanced Model for Dataset: {dataset_name}")
+
+        # Load data generator
+        generator = SignatureDataGenerator(
+            dataset={dataset_name: config},
+            img_height=IMG_SHAPE[0],
+            img_width=IMG_SHAPE[1],
+            batch_sz=BATCH_SIZE,
+        )
+
+        # Load triplet data
+        train_dataset = generator.get_triplet_train(use_clahe=True,
+                                                    log_csv_path=f"outputs/logs/{dataset_name}_run{run_id}__triplets.csv")
+
+        # Build model (triplet loss version)
+        model = build_triplet_network(IMG_SHAPE)
+        model.compile(optimizer=Adam(learning_rate=0.0001), loss=triplet_loss(margin=1))
+
+        # ========== Training ==========
+        print("🧠 Starting training with triplet loss ...")
+        history = model.fit(
+            train_dataset,
+            steps_per_epoch=len(generator.train_writers),
+            epochs=EPOCHS,
+            verbose=2
+        )
+
+        # Save the model 
+        enhanced_model_path = f"{weights_dir}/enhanced_{dataset_name}.h5"
+        model.save(enhanced_model_path)
+        print(f"✅ Enhanced model saved to: {enhanced_model_path}")

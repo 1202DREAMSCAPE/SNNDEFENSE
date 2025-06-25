@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Signature Verification</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <h1>Signature Verification System</h1>
+
+    <!-- Base Model Form -->
+    <form method="POST" enctype="multipart/form-data" action="/base" id="base-form">
+        <h2>Base Model (MinMax Preprocessing)</h2>
+        <label for="writer_id_base">Select Writer ID:</label>
+        <select id="writer_id_base" name="writer_id" class="writer-dropdown" required>
+            <option value="" disabled selected>Select a writer</option>
+        </select>
+        
+        <label for="signature_base">Upload Signature:</label>
+        <input type="file" id="signature_base" name="signature" accept="image/*" required onchange="previewFile(this, 'raw-preview-base')">
+        
+        <img id="raw-preview-base" style="display:none; max-width: 200px; margin-top: 10px;" alt="Raw Image Preview">
+        
+        <button type="submit">Verify with Base Model</button>
+    </form>
+
+    <!-- Enhanced Model Form -->
+    <form method="POST" enctype="multipart/form-data" action="/enhanced" id="enhanced-form">
+        <h2>Enhanced Model (CLAHE Preprocessing)</h2>
+        <label for="writer_id_enhanced">Select Writer ID:</label>
+        <select id="writer_id_enhanced" name="writer_id" class="writer-dropdown" required>
+            <option value="" disabled selected>Select a writer</option>
+        </select>
+        
+        <label for="signature_enhanced">Upload Signature:</label>
+        <input type="file" id="signature_enhanced" name="signature" accept="image/*" required onchange="previewFile(this, 'raw-preview-enhanced')">
+        
+        <img id="raw-preview-enhanced" style="display:none; max-width: 200px; margin-top: 10px;" alt="Raw Image Preview">
+        
+        <button type="submit">Verify with Enhanced Model</button>
+    </form>
+
+    <!-- Results Section -->
+        <div id="results" style="margin-top: 20px;">
+        <h2>Verification Results</h2>
+        <p id="result-text"></p>
+        <img id="raw-preview" style="display:none; max-width: 200px; margin-top: 10px;" alt="Raw Image">
+        <img id="clahe-preview" style="display:none; max-width: 200px; margin-top: 10px;" alt="CLAHE Enhanced Image">
+        <img id="minmax-preview" style="display:none; max-width: 200px; margin-top: 10px;" alt="MinMax Preprocessed Image">
+    </div>
+</body>
+
+<script>
+    // Fetch writer IDs from the backend and populate the dropdown
+    async function populateWriterDropdown() {
+        const response = await fetch('/get_writers');
+        const writerIds = await response.json();
+        const dropdowns = document.querySelectorAll('.writer-dropdown');
+
+        dropdowns.forEach(dropdown => {
+            writerIds.forEach(writerId => {
+                const option = document.createElement('option');
+                option.value = writerId;
+                option.textContent = writerId;
+                dropdown.appendChild(option);
+            });
+        });
+    }
+
+    async function handleVerificationResponse(response) {
+        const data = await response.json();
+    
+        // Update result text
+        document.getElementById("result-text").textContent = data.result;
+    
+        // Display raw image
+        const rawPreview = document.getElementById("raw-preview");
+        rawPreview.src = data.raw_image_url;
+        rawPreview.style.display = "block";
+    
+        // Display CLAHE-enhanced image
+        const clahePreview = document.getElementById("clahe-preview");
+        clahePreview.src = data.clahe_image_url;
+        clahePreview.style.display = "block";
+    
+        // Display MinMax-preprocessed image
+        const minmaxPreview = document.getElementById("minmax-preview");
+        minmaxPreview.src = data.minmax_image_url;
+        minmaxPreview.style.display = "block";
+    }
+
+    // Preview the uploaded file
+    function previewFile(input, previewElementId) {
+        const file = input.files[0];
+        const reader = new FileReader();
+
+        reader.onload = function (e) {
+            const previewElement = document.getElementById(previewElementId);
+            previewElement.src = e.target.result;
+            previewElement.style.display = "block";
+        };
+
+        if (file) {
+            reader.readAsDataURL(file);
+        }
+    }
+
+    // Populate dropdowns when the page loads
+    window.onload = populateWriterDropdown;
+</script>
+
+</html>

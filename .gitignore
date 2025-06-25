@@ -1,10 +1,8 @@
 /Dataset
 /venv
-/sop1_outputs
-/sop2_outputs
-/sop3_outputs
-/base_weights_softmax
 /outputs
 /models
 /old codes
 /triplet_weights
+/signature_verification/Dataset
+/enhanced_weights
