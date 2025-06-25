@@ -21,7 +21,7 @@ A web-based signature verification system with two models:
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/signature-verification-system.git
+git clone https://github.com/1202DREAMSCAPE/signature-verification-system.git
 cd signature-verification-system
 ```
 
