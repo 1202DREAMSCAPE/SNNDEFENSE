@@ -1,48 +1,51 @@
+import os
+import csv
 import pickle
 import numpy as np
 from preprocess import preprocess_signature
 import tensorflow as tf
-import os
-import csv
 
 def generate_reference_embeddings(reference_signatures, model, output_path, model_type="base"):
     """
     Generate and save reference embeddings for each writer.
 
     Args:
-        reference_signatures (dict): Mapping of writer_id -> list of signature_paths
-        model (tf.keras.Model): Trained model (base or triplet-based)
-        output_path (str): File path to save the embeddings (pkl)
-        model_type (str): Either 'base' or 'enhanced'
+        reference_signatures (dict): Mapping of writer_id -> list of signature image paths
+        model (tf.keras.Model): Trained model (either base or enhanced)
+        output_path (str): Path to save the pickle file
+        model_type (str): 'base' or 'enhanced'
     """
     reference_embeddings = {}
 
     for writer_id, signature_paths in reference_signatures.items():
-        # print(f"[INFO] Processing Writer {writer_id} with {len(signature_paths)} signatures...")
         for signature_path in signature_paths:
-            # print(f"[DEBUG] - {signature_path}")
-            signature = preprocess_signature(signature_path)
+            try:
+                signature = preprocess_signature(
+                    signature_path,
+                    preprocessing_type="minmax" if model_type == "base" else "clahe"
+                )
+                if model_type == "base":
+                    embedding = model.predict(np.expand_dims(signature, axis=0), verbose=0)[0].flatten()
+                elif model_type == "enhanced":
+                    anchor = np.expand_dims(signature, axis=0)
+                    embedding = model.predict([anchor, anchor, anchor], verbose=0)[0][0]
+                else:
+                    raise ValueError(f"[ERROR] Unsupported model_type: {model_type}")
 
-            if model_type == "base":
-                embedding = model.predict(np.expand_dims(signature, axis=0), verbose=0)[0].flatten()
-            elif model_type == "enhanced":
-                anchor = np.expand_dims(signature, axis=0)
-                triplet_out = model.predict([anchor, anchor, anchor], verbose=0)
-                embedding = triplet_out[0][0]
-            else:
-                raise ValueError(f"Unsupported model_type: {model_type}")
+                reference_embeddings.setdefault(writer_id, []).append({
+                    "embedding": embedding,
+                    "path": signature_path
+                })
 
-            reference_embeddings.setdefault(writer_id, []).append({
-                "embedding": embedding,
-                "path": signature_path
-            })
+            except Exception as e:
+                print(f"[WARN] Failed to process {signature_path}: {e}")
 
-    # Save as pickle
+    # --- Save as Pickle ---
     with open(output_path, "wb") as f:
         pickle.dump(reference_embeddings, f)
     print(f"[✓] Saved reference embeddings to: {output_path}")
 
-    # Save writer summary to CSV
+    # --- Log Writer Embedding Counts as CSV ---
     csv_log = output_path.replace(".pkl", "_log.csv")
     with open(csv_log, "w", newline="") as csvfile:
         writer = csv.writer(csvfile)
