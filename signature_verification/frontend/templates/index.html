@@ -27,6 +27,7 @@
         </svg>
         Verify with Base Model
       </button>
+      <button type="button" onclick="showBasePair()" class="mt-2 px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700">🔍 Show Softmax Pairing</button>
     </form>
 
     <!-- Enhanced Model Form -->
@@ -49,28 +50,49 @@
       <button type="button" onclick="requestTripletExample()" class="mt-2 px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700">🔍 Show Triplet Sample</button>
     </form>
 
-    <!-- Triplet Modal -->
-    <div id="triplet-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden justify-center items-center z-50">
-      <div class="bg-white rounded-lg p-6 max-w-4xl mx-auto relative">
-        <button onclick="closeTripletModal()" class="absolute top-2 right-2 text-gray-500 hover:text-black">✖</button>
-        <h2 class="text-lg font-semibold text-center mb-4">Triplet Visualization</h2>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div>
-            <img id="anchor-img" class="hidden rounded border" />
-            <p class="text-sm text-center mt-2">Anchor (Uploaded)</p>
-          </div>
-          <div>
-            <img id="positive-img" class="hidden rounded border" />
-            <p class="text-sm text-center mt-2">Closest Match (Positive)</p>
-          </div>
-          <div>
-            <img id="negative-img" class="hidden rounded border" />
-            <p class="text-sm text-center mt-2">Closest Imposter (Negative)</p>
-          </div>
-        </div>
-        <div id="triplet-stats" class="mt-4 text-center text-sm text-gray-700"></div>
+<!-- Base Modal (Softmax Pair) -->
+<div id="pair-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden justify-center items-center z-50">
+  <div class="bg-white rounded-lg p-6 max-w-3xl mx-auto relative">
+    <button onclick="closePairModal()" class="absolute top-2 right-2 text-gray-500 hover:text-black">✖</button>
+    <h2 class="text-lg font-semibold text-center mb-4">Softmax Pair Comparison</h2>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div>
+        <img id="pair-uploaded" class="hidden rounded border" />
+        <p class="text-sm text-center mt-2">Uploaded</p>
+      </div>
+      <div>
+        <img id="pair-reference" class="hidden rounded border" />
+        <p class="text-sm text-center mt-2">Reference</p>
       </div>
     </div>
+    <div id="pair-result-text" class="mt-4 text-center text-sm text-gray-700"></div>
+  </div>
+</div>
+
+    
+    <!-- Triplet Modal -->
+<div id="triplet-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden justify-center items-center z-50">
+  <div class="bg-white rounded-lg p-6 max-w-4xl mx-auto relative">
+    <button onclick="closeTripletModal()" class="absolute top-2 right-2 text-gray-500 hover:text-black">✖</button>
+    <h2 class="text-lg font-semibold text-center mb-4">Triplet Visualization</h2>
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div>
+        <img id="positive-img" class="hidden rounded border" />
+        <p class="text-sm text-center mt-2">Positive</p>
+      </div>
+      <div>
+        <img id="anchor-img" class="hidden rounded border" />
+        <p class="text-sm text-center mt-2">Anchor (Uploaded)</p>
+      </div>
+      <div>
+        <img id="negative-img" class="hidden rounded border" />
+        <p class="text-sm text-center mt-2">Negative</p>
+      </div>
+    </div>
+    <div id="triplet-stats" class="mt-4 text-center text-sm text-gray-700"></div>
+  </div>
+</div>
+
 
     <!-- Results -->
     <div id="results" class="bg-white rounded-lg shadow-md p-6 hidden">
@@ -98,6 +120,14 @@
   </div>
 
   <script>
+    function openPairModal() {
+      document.getElementById("pair-modal").classList.remove("hidden");
+    }
+    
+    function closePairModal() {
+      document.getElementById("pair-modal").classList.add("hidden");
+    }
+    
     function openTripletModal() {
       document.getElementById("triplet-modal").classList.remove("hidden");
     }
@@ -173,18 +203,19 @@
     }
 
     function showTripletImages(anchorURL, positiveURL, negativeURL, apDist = null, anDist = null) {
-      const a = document.getElementById("anchor-img");
-      const p = document.getElementById("positive-img");
-      const n = document.getElementById("negative-img");
-
-      a.src = anchorURL;
-      p.src = positiveURL;
-      n.src = negativeURL;
-
-      a.classList.remove("hidden");
-      p.classList.remove("hidden");
-      n.classList.remove("hidden");
-
+      const timestamp = new Date().getTime();
+    
+      // Add timestamp to force reload and avoid browser cache
+      document.getElementById("anchor-img").src = anchorURL + `?t=${timestamp}`;
+      document.getElementById("positive-img").src = positiveURL + `?t=${timestamp}`;
+      document.getElementById("negative-img").src = negativeURL + `?t=${timestamp}`;
+    
+      // Show image elements
+      document.getElementById("anchor-img").classList.remove("hidden");
+      document.getElementById("positive-img").classList.remove("hidden");
+      document.getElementById("negative-img").classList.remove("hidden");
+    
+      // Show distances
       const stats = document.getElementById("triplet-stats");
       if (apDist !== null && anDist !== null) {
         stats.innerHTML = `
@@ -194,8 +225,29 @@
       } else {
         stats.innerHTML = "";
       }
-
+    
       openTripletModal();
+    }
+    
+    function showPairComparison(response) {
+      const modal = document.getElementById("pair-modal");
+    
+      const uploadedImage = document.getElementById("pair-uploaded");
+      const referenceImage = document.getElementById("pair-reference");
+    
+      const timestamp = new Date().getTime();
+      uploadedImage.src = response.uploaded_image_url + "?t=" + timestamp;
+      referenceImage.src = response.reference_image_url + "?t=" + timestamp;
+    
+      // 🛠️ Ensure images are shown
+      uploadedImage.classList.remove("hidden");
+      referenceImage.classList.remove("hidden");
+    
+      document.getElementById("pair-result-text").innerHTML = `
+        🧮 <strong>Embedding Distance:</strong> ${response.distance.toFixed(4)}
+      `;
+    
+      modal.classList.remove("hidden"); // Ensure modal is visible
     }
 
     async function requestTripletExample() {
@@ -231,7 +283,32 @@
             alert("⚠ Could not generate triplet example.");
         }
         }
-
+      
+    async function showBasePair() {
+          const form = document.getElementById("base-form");
+          const formData = new FormData(form);
+        
+          const fileInput = document.getElementById("signature_base");
+          const uploadedFile = fileInput.files[0];
+          if (!uploadedFile) {
+            alert("Please upload a signature image first.");
+            return;
+          }
+        
+          const response = await fetch("/verify_pair", {
+            method: "POST",
+            body: formData
+          });
+        
+          const data = await response.json();
+        
+          if (data.uploaded_image_url && data.reference_image_url) {
+            showPairComparison(data);
+          } else {
+            alert("⚠ Pair comparison failed.");
+          }
+        }
+        
 
     document.getElementById("base-form").addEventListener("submit", async e => {
       e.preventDefault();

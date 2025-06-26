@@ -35,6 +35,15 @@ enhanced_model = enhanced_siamese_model.get_layer("base_network")
 def index():
     return render_template("index.html")
 
+@app.route("/get_writers", methods=["GET"])
+def get_writers():
+    dataset_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../dataset/cedar"))
+    writer_ids = sorted([
+        folder for folder in os.listdir(dataset_path)
+        if os.path.isdir(os.path.join(dataset_path, folder))
+    ])
+    return jsonify(writer_ids)
+
 @app.route("/base", methods=["POST"])
 def verify_base():
     uploaded_file = request.files["signature"]
@@ -125,9 +134,11 @@ def get_triplet_example():
         anchor_path = os.path.join(STATIC_TEMP, filename)
         uploaded_file.save(anchor_path)
 
+        # Preprocess anchor with CLAHE (used for both embedding and modal display)
         anchor_img = preprocess_signature(anchor_path, preprocessing_type="clahe")
         anchor_emb = enhanced_model.predict(np.expand_dims(anchor_img, axis=0), verbose=0)[0]
 
+        # Find closest positive
         min_pos_dist, pos_path = float("inf"), None
         for ref in enhanced_reference_embeddings[writer_id]:
             dist = np.linalg.norm(anchor_emb - ref["embedding"])
@@ -135,6 +146,7 @@ def get_triplet_example():
                 min_pos_dist = dist
                 pos_path = ref["path"]
 
+        # Find closest negative
         min_neg_dist, neg_path = float("inf"), None
         for other_writer, refs in enhanced_reference_embeddings.items():
             if other_writer == writer_id:
@@ -151,7 +163,12 @@ def get_triplet_example():
             cv2.imwrite(dest, img)
             return f"/static/temp/{dest_name}"
 
-        anchor_url = f"/static/temp/{filename}"
+        # Save CLAHE-enhanced anchor image for modal display
+        clahe_anchor_img = (anchor_img * 255).astype("uint8")  # Denormalize
+        anchor_dest = os.path.join(STATIC_TEMP, "triplet_anchor.png")
+        cv2.imwrite(anchor_dest, clahe_anchor_img)
+
+        anchor_url = "/static/temp/triplet_anchor.png"
         positive_url = save_preview_image(pos_path, "triplet_positive.png")
         negative_url = save_preview_image(neg_path, "triplet_negative.png")
 
@@ -163,19 +180,58 @@ def get_triplet_example():
             "anchor_negative_dist": float(round(min_neg_dist, 4))
         })
 
-
     except Exception as e:
         print("[ERROR] Triplet generation failed:", e)
         return jsonify({"error": str(e)}), 500
 
-@app.route("/get_writers", methods=["GET"])
-def get_writers():
-    dataset_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../dataset/cedar"))
-    writer_ids = sorted([
-        folder for folder in os.listdir(dataset_path)
-        if os.path.isdir(os.path.join(dataset_path, folder))
-    ])
-    return jsonify(writer_ids)
+@app.route("/verify_pair", methods=["POST"])
+def verify_pair_signature():
+    uploaded_file = request.files["signature"]
+    writer_id = request.form["writer_id"]
+
+    raw_path = os.path.join(STATIC_TEMP, uploaded_file.filename)
+    uploaded_file.save(raw_path)
+
+    # Preprocess using MinMax (for softmax base model)
+    processed_img = preprocess_signature(raw_path, preprocessing_type="minmax")
+    uploaded_emb = base_model.predict(np.expand_dims(processed_img, axis=0), verbose=0)[0]
+
+    # Find closest reference image from writer_id
+    min_dist = float("inf")
+    closest_ref = None
+
+    for ref in base_reference_embeddings[writer_id]:
+        dist = np.linalg.norm(uploaded_emb - ref["embedding"])
+        if dist < min_dist:
+            min_dist = dist
+            closest_ref = ref["path"]
+
+    # Preprocess the closest reference
+    ref_img = preprocess_signature(closest_ref, preprocessing_type="minmax")
+    ref_img_tensor = np.expand_dims(ref_img, axis=0)
+    uploaded_tensor = np.expand_dims(processed_img, axis=0)
+
+    # Predict using softmax pair model
+    result = base_siamese_model.predict([uploaded_tensor, ref_img_tensor], verbose=0)
+    # Load threshold (ideally from file or set here if fixed)
+    YOUDEN_THRESHOLD = 0.5000  # Replace with actual threshold used in evaluation
+    score = float(result[0][0])  # safely extract scalar from shape (1, 1)
+    predicted_class = int(score > YOUDEN_THRESHOLD)
+
+    # Save both images for preview
+    uploaded_preview = f"pair_uploaded_{uploaded_file.filename}"
+    ref_preview = f"pair_reference_{os.path.basename(closest_ref)}"
+
+    cv2.imwrite(os.path.join(STATIC_TEMP, uploaded_preview), processed_img.squeeze() * 255)
+    cv2.imwrite(os.path.join(STATIC_TEMP, ref_preview), ref_img.squeeze() * 255)
+
+    return jsonify({
+        "result": "Genuine" if predicted_class == 1 else "Forged",
+        "distance": round(float(min_dist), 4),
+        "uploaded_image_url": f"/static/temp/{uploaded_preview}",
+        "reference_image_url": f"/static/temp/{ref_preview}"
+    })
+
 
 @app.route("/static/temp/<path:filename>")
 def serve_temp(filename):
