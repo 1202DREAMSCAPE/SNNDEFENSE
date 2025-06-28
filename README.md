@@ -28,6 +28,7 @@ cd signature-verification-system
 ### 2. Create a Virtual Environment
 
 ```bash
+cd signature_verification/backend
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 ```
@@ -102,7 +103,7 @@ dataset/cedar/
 ## 🚀 Run the App
 
 ```bash
-cd backend
+cd signature_verification/backend
 python app.py
 ```
 
