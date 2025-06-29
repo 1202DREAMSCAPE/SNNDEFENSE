@@ -138,6 +138,10 @@ def get_triplet_example():
         anchor_img = preprocess_signature(anchor_path, preprocessing_type="clahe")
         anchor_emb = enhanced_model.predict(np.expand_dims(anchor_img, axis=0), verbose=0)[0]
 
+        # Debug: print writer_id and available keys
+        print("writer_id:", writer_id)
+        print("enhanced_reference_embeddings keys:", list(enhanced_reference_embeddings.keys()))
+
         # Find closest positive
         min_pos_dist, pos_path = float("inf"), None
         for ref in enhanced_reference_embeddings[writer_id]:
@@ -156,6 +160,10 @@ def get_triplet_example():
                 if dist < min_neg_dist:
                     min_neg_dist = dist
                     neg_path = ref["path"]
+
+        # Debug: print found paths
+        print("pos_path:", pos_path)
+        print("neg_path:", neg_path)
 
         def save_preview_image(src, dest_name):
             img = cv2.imread(src, cv2.IMREAD_GRAYSCALE)
@@ -182,6 +190,7 @@ def get_triplet_example():
 
     except Exception as e:
         print("[ERROR] Triplet generation failed:", e)
+        import traceback; traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 @app.route("/verify_pair", methods=["POST"])
