@@ -27,11 +27,19 @@ def calculate_f1_threshold(distances, labels):
 
     return best_thr
 
-def verify_signature(claimed_writer_id, uploaded_signature_path, reference_embeddings, model, threshold=0.5):
+def verify_signature(claimed_writer_id, uploaded_signature_path, reference_embeddings, model, model_type):
     """
-    Verify the authenticity of a signature using the specified threshold.
+    Verify the authenticity of a signature using model-specific optimal threshold.
     Handles both base (single embedding) and enhanced (list of dicts) models.
     """
+    # Use hardcoded optimal thresholds based on model type
+    if model_type == 'base':
+        threshold = 0.4982339  
+    elif model_type == 'enhanced':
+        threshold = 0.7785  
+    else:
+        raise ValueError("model_type must be 'base' or 'enhanced'")
+    
     # Preprocess the uploaded signature
     uploaded_signature = preprocess_signature(uploaded_signature_path)
 

@@ -61,7 +61,7 @@ def verify_base():
         uploaded_signature_path=raw_path,
         reference_embeddings=base_reference_embeddings,
         model=base_model,
-        threshold=0.5
+        model_type=base
     )
 
     result.update({
@@ -107,7 +107,7 @@ def verify_enhanced():
         uploaded_signature_path=raw_path,
         reference_embeddings=enhanced_reference_embeddings,
         model=enhanced_model,
-        threshold=0.5
+        model_type=enhanced
     )
 
     result.update({
