@@ -53,8 +53,13 @@ def verify_base():
     minmax_path = f"{STATIC_TEMP}/minmax_{uploaded_file.filename}"
     uploaded_file.save(raw_path)
 
-    minmax_img = preprocess_signature(raw_path, preprocessing_type="minmax")
+    minmax_img, minmax_edge_count = preprocess_signature(raw_path, preprocessing_type="minmax")
     cv2.imwrite(minmax_path, minmax_img.squeeze() * 255)
+
+    # Log edge count to terminal and CSV
+    print(f"[BASE] Writer: {writer_id}, File: {uploaded_file.filename}, MinMax Edge Count: {minmax_edge_count}")
+    with open("edge_counts.csv", "a") as f:
+        f.write(f"base,{writer_id},{uploaded_file.filename},minmax,{minmax_edge_count}\n")
 
     result = verify_signature(
         claimed_writer_id=writer_id,
@@ -80,20 +85,24 @@ def verify_enhanced():
     clahe_path = f"{STATIC_TEMP}/clahe_{uploaded_file.filename}"
     uploaded_file.save(raw_path)
 
-    # Preprocess + save CLAHE image
-    clahe_img = preprocess_signature(raw_path, preprocessing_type="clahe")
+    clahe_img, clahe_edge_count = preprocess_signature(raw_path, preprocessing_type="clahe")
     cv2.imwrite(clahe_path, clahe_img.squeeze() * 255)
 
-    # Predict + normalize uploaded embedding
     raw_emb = enhanced_model.predict(np.expand_dims(clahe_img, axis=0), verbose=0)[0].flatten()
     uploaded_emb = raw_emb / (np.linalg.norm(raw_emb) + 1e-10)
 
-    # after saving raw image and before returning result
-    minmax_img = preprocess_signature(raw_path, preprocessing_type="minmax")
+    # Get MinMax for comparison only
+    minmax_img, minmax_edge_count = preprocess_signature(raw_path, preprocessing_type="minmax")
     minmax_path = f"{STATIC_TEMP}/minmax_{uploaded_file.filename}"
     cv2.imwrite(minmax_path, (minmax_img.squeeze() * 255).astype(np.uint8))
 
-    # Find closest positive (same writer)
+    # Log to terminal and CSV
+    print(f"[ENHANCED] Writer: {writer_id}, File: {uploaded_file.filename}, CLAHE Edge Count: {clahe_edge_count}, MinMax Edge Count: {minmax_edge_count}")
+    with open("edge_counts.csv", "a") as f:
+        f.write(f"enhanced,{writer_id},{uploaded_file.filename},clahe,{clahe_edge_count}\n")
+        f.write(f"enhanced,{writer_id},{uploaded_file.filename},minmax,{minmax_edge_count}\n")
+
+    # Find closest positive
     min_pos_dist, positive_path = float("inf"), None
     for ref in enhanced_reference_embeddings[writer_id]:
         ref_emb = ref["embedding"]
@@ -103,7 +112,7 @@ def verify_enhanced():
             min_pos_dist = dist
             positive_path = ref["path"]
 
-    # Find closest negative (different writer)
+    # Closest negative
     min_neg_dist, negative_path = float("inf"), None
     for other_writer, refs in enhanced_reference_embeddings.items():
         if other_writer == writer_id:
@@ -116,7 +125,6 @@ def verify_enhanced():
                 min_neg_dist = dist
                 negative_path = ref["path"]
 
-    # Signature Verification
     result = verify_signature(
         claimed_writer_id=writer_id,
         uploaded_signature_path=raw_path,
@@ -137,6 +145,7 @@ def verify_enhanced():
 
     return jsonify(result)
 
+
 @app.route("/get_triplet_example", methods=["POST"])
 def get_triplet_example():
     try:
@@ -146,13 +155,15 @@ def get_triplet_example():
         anchor_path = os.path.join(STATIC_TEMP, filename)
         uploaded_file.save(anchor_path)
 
-        # Preprocess anchor with CLAHE
-        anchor_img = preprocess_signature(anchor_path, preprocessing_type="clahe")
+        # ✅ Fix: Unpack the tuple
+        anchor_img, _ = preprocess_signature(anchor_path, preprocessing_type="clahe")
+
+        # ✅ Use only the image for model prediction
         raw_emb = enhanced_model.predict(np.expand_dims(anchor_img, axis=0), verbose=0)[0].flatten()
         anchor_emb = raw_emb / (np.linalg.norm(raw_emb) + 1e-10)  # L2 normalize
 
-        print("writer_id:", writer_id)
-        print("enhanced_reference_embeddings keys:", list(enhanced_reference_embeddings.keys()))
+        # print("writer_id:", writer_id)
+        # print("enhanced_reference_embeddings keys:", list(enhanced_reference_embeddings.keys()))
 
         # Find closest positive (same writer)
         min_pos_dist, pos_path = float("inf"), None
@@ -164,7 +175,7 @@ def get_triplet_example():
                 min_pos_dist = dist
                 pos_path = ref["path"]
 
-        # Find closest negative (other writers)
+        # Find closest negative (different writer)
         min_neg_dist, neg_path = float("inf"), None
         for other_writer, refs in enhanced_reference_embeddings.items():
             if other_writer == writer_id:
@@ -183,7 +194,7 @@ def get_triplet_example():
             cv2.imwrite(dest, img)
             return f"/static/temp/{dest_name}"
 
-        # Save CLAHE-enhanced anchor image
+        # ✅ Convert CLAHE-enhanced anchor back to uint8 for preview
         clahe_anchor_img = (anchor_img * 255).astype("uint8")
         anchor_dest = os.path.join(STATIC_TEMP, "triplet_anchor.png")
         cv2.imwrite(anchor_dest, clahe_anchor_img)
@@ -205,6 +216,7 @@ def get_triplet_example():
         import traceback; traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+
 @app.route("/verify_pair", methods=["POST"])
 def verify_pair_signature():
     uploaded_file = request.files["signature"]
@@ -213,8 +225,8 @@ def verify_pair_signature():
     raw_path = os.path.join(STATIC_TEMP, uploaded_file.filename)
     uploaded_file.save(raw_path)
 
-    # Preprocess using MinMax (for base model)
-    processed_img = preprocess_signature(raw_path, preprocessing_type="minmax")
+    # ✅ Unpack properly
+    processed_img, _ = preprocess_signature(raw_path, preprocessing_type="minmax")
     uploaded_emb = base_model.predict(np.expand_dims(processed_img, axis=0), verbose=0)[0]
 
     # Find closest reference image from writer_id
@@ -231,13 +243,12 @@ def verify_pair_signature():
     uploaded_preview = f"pair_uploaded_{uploaded_file.filename}"
     ref_preview = f"pair_reference_{os.path.basename(closest_ref)}"
 
-    # Fix: convert normalized float image to uint8 before saving
+    # ✅ Convert normalized float image to uint8 before saving
     cv2.imwrite(
         os.path.join(STATIC_TEMP, uploaded_preview),
         (processed_img.squeeze() * 255).astype(np.uint8)
     )
 
-    # No need to multiply ref_img by 255 — already uint8
     ref_img = cv2.imread(closest_ref, cv2.IMREAD_GRAYSCALE)
     cv2.imwrite(os.path.join(STATIC_TEMP, ref_preview), ref_img)
 
@@ -246,6 +257,7 @@ def verify_pair_signature():
         "uploaded_image_url": f"/static/temp/{uploaded_preview}",
         "reference_image_url": f"/static/temp/{ref_preview}"
     })
+
 
 @app.route("/static/temp/<path:filename>")
 def serve_temp(filename):

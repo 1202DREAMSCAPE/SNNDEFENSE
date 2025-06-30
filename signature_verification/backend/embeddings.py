@@ -1,9 +1,8 @@
 import os
-import csv
 import pickle
+import csv
 import numpy as np
 from preprocess import preprocess_signature
-import tensorflow as tf
 
 def generate_reference_embeddings(reference_signatures, model, output_path, model_type="base"):
     """
@@ -20,10 +19,12 @@ def generate_reference_embeddings(reference_signatures, model, output_path, mode
     for writer_id, signature_paths in reference_signatures.items():
         for signature_path in signature_paths:
             try:
-                signature = preprocess_signature(
+                # Unpack preprocessed image and edge count
+                signature, edge_count = preprocess_signature(
                     signature_path,
                     preprocessing_type="minmax" if model_type == "base" else "clahe"
                 )
+
                 if model_type == "base":
                     embedding = model.predict(np.expand_dims(signature, axis=0), verbose=0)[0].flatten()
                 elif model_type == "enhanced":
@@ -34,7 +35,8 @@ def generate_reference_embeddings(reference_signatures, model, output_path, mode
 
                 reference_embeddings.setdefault(writer_id, []).append({
                     "embedding": embedding,
-                    "path": signature_path
+                    "path": signature_path,
+                    "edge_count": edge_count  # Optional: useful for analysis
                 })
 
             except Exception as e:

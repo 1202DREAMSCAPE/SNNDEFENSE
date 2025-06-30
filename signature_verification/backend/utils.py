@@ -36,12 +36,16 @@ def verify_signature(claimed_writer_id, uploaded_signature_path, reference_embed
     if model_type == 'base':
         threshold = 0.4982339  
     elif model_type == 'enhanced':
-        threshold = 0.7785  
+        threshold = 0.827 
     else:
         raise ValueError("model_type must be 'base' or 'enhanced'")
     
     # Preprocess the uploaded signature
-    uploaded_signature = preprocess_signature(uploaded_signature_path)
+    uploaded_signature, _ = preprocess_signature(
+        uploaded_signature_path,
+        preprocessing_type="minmax" if model_type == "base" else "clahe"
+    )
+
 
     # Generate embedding for uploaded signature
     uploaded_emb = model.predict(np.expand_dims(uploaded_signature, axis=0), verbose=0)[0].flatten()
