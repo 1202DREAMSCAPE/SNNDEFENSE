@@ -61,7 +61,7 @@ def verify_base():
         uploaded_signature_path=raw_path,
         reference_embeddings=base_reference_embeddings,
         model=base_model,
-        model_type=base
+        model_type="base"
     )
 
     result.update({
@@ -80,48 +80,60 @@ def verify_enhanced():
     clahe_path = f"{STATIC_TEMP}/clahe_{uploaded_file.filename}"
     uploaded_file.save(raw_path)
 
+    # Preprocess + save CLAHE image
     clahe_img = preprocess_signature(raw_path, preprocessing_type="clahe")
     cv2.imwrite(clahe_path, clahe_img.squeeze() * 255)
 
-    uploaded_emb = enhanced_model.predict(np.expand_dims(clahe_img, axis=0), verbose=0)[0].flatten()
+    # Predict + normalize uploaded embedding
+    raw_emb = enhanced_model.predict(np.expand_dims(clahe_img, axis=0), verbose=0)[0].flatten()
+    uploaded_emb = raw_emb / (np.linalg.norm(raw_emb) + 1e-10)
 
+    # after saving raw image and before returning result
+    minmax_img = preprocess_signature(raw_path, preprocessing_type="minmax")
+    minmax_path = f"{STATIC_TEMP}/minmax_{uploaded_file.filename}"
+    cv2.imwrite(minmax_path, (minmax_img.squeeze() * 255).astype(np.uint8))
+
+    # Find closest positive (same writer)
     min_pos_dist, positive_path = float("inf"), None
     for ref in enhanced_reference_embeddings[writer_id]:
-        dist = np.linalg.norm(uploaded_emb - ref["embedding"])
+        ref_emb = ref["embedding"]
+        ref_emb = ref_emb / (np.linalg.norm(ref_emb) + 1e-10)
+        dist = np.linalg.norm(uploaded_emb - ref_emb)
         if dist < min_pos_dist:
             min_pos_dist = dist
             positive_path = ref["path"]
 
+    # Find closest negative (different writer)
     min_neg_dist, negative_path = float("inf"), None
     for other_writer, refs in enhanced_reference_embeddings.items():
         if other_writer == writer_id:
             continue
         for ref in refs:
-            dist = np.linalg.norm(uploaded_emb - ref["embedding"])
+            ref_emb = ref["embedding"]
+            ref_emb = ref_emb / (np.linalg.norm(ref_emb) + 1e-10)
+            dist = np.linalg.norm(uploaded_emb - ref_emb)
             if dist < min_neg_dist:
                 min_neg_dist = dist
                 negative_path = ref["path"]
 
+    # Signature Verification
     result = verify_signature(
         claimed_writer_id=writer_id,
         uploaded_signature_path=raw_path,
         reference_embeddings=enhanced_reference_embeddings,
         model=enhanced_model,
-        model_type=enhanced
+        model_type="enhanced"
     )
 
     result.update({
         "raw_image_url": f"/static/temp/{uploaded_file.filename}",
         "clahe_image_url": f"/static/temp/clahe_{uploaded_file.filename}",
+        "minmax_image_url": f"/static/temp/minmax_{uploaded_file.filename}",
         "positive_image_url": f"/{positive_path}",
         "negative_image_url": f"/{negative_path}",
         "positive_distance": float(round(float(min_pos_dist), 4)),
-        "negative_distance": float(round(float(min_neg_dist), 4)),
-        "distance": float(result["distance"]),
-        "threshold": float(result["threshold"]),
-        "confidence": float(result["confidence"])
+        "negative_distance": float(round(float(min_neg_dist), 4))
     })
-
 
     return jsonify(result)
 
@@ -134,36 +146,36 @@ def get_triplet_example():
         anchor_path = os.path.join(STATIC_TEMP, filename)
         uploaded_file.save(anchor_path)
 
-        # Preprocess anchor with CLAHE (used for both embedding and modal display)
+        # Preprocess anchor with CLAHE
         anchor_img = preprocess_signature(anchor_path, preprocessing_type="clahe")
-        anchor_emb = enhanced_model.predict(np.expand_dims(anchor_img, axis=0), verbose=0)[0]
+        raw_emb = enhanced_model.predict(np.expand_dims(anchor_img, axis=0), verbose=0)[0].flatten()
+        anchor_emb = raw_emb / (np.linalg.norm(raw_emb) + 1e-10)  # L2 normalize
 
-        # Debug: print writer_id and available keys
         print("writer_id:", writer_id)
         print("enhanced_reference_embeddings keys:", list(enhanced_reference_embeddings.keys()))
 
-        # Find closest positive
+        # Find closest positive (same writer)
         min_pos_dist, pos_path = float("inf"), None
         for ref in enhanced_reference_embeddings[writer_id]:
-            dist = np.linalg.norm(anchor_emb - ref["embedding"])
+            ref_emb = ref["embedding"]
+            ref_emb = ref_emb / (np.linalg.norm(ref_emb) + 1e-10)
+            dist = np.linalg.norm(anchor_emb - ref_emb)
             if dist < min_pos_dist:
                 min_pos_dist = dist
                 pos_path = ref["path"]
 
-        # Find closest negative
+        # Find closest negative (other writers)
         min_neg_dist, neg_path = float("inf"), None
         for other_writer, refs in enhanced_reference_embeddings.items():
             if other_writer == writer_id:
                 continue
             for ref in refs:
-                dist = np.linalg.norm(anchor_emb - ref["embedding"])
+                ref_emb = ref["embedding"]
+                ref_emb = ref_emb / (np.linalg.norm(ref_emb) + 1e-10)
+                dist = np.linalg.norm(anchor_emb - ref_emb)
                 if dist < min_neg_dist:
                     min_neg_dist = dist
                     neg_path = ref["path"]
-
-        # Debug: print found paths
-        print("pos_path:", pos_path)
-        print("neg_path:", neg_path)
 
         def save_preview_image(src, dest_name):
             img = cv2.imread(src, cv2.IMREAD_GRAYSCALE)
@@ -171,8 +183,8 @@ def get_triplet_example():
             cv2.imwrite(dest, img)
             return f"/static/temp/{dest_name}"
 
-        # Save CLAHE-enhanced anchor image for modal display
-        clahe_anchor_img = (anchor_img * 255).astype("uint8")  # Denormalize
+        # Save CLAHE-enhanced anchor image
+        clahe_anchor_img = (anchor_img * 255).astype("uint8")
         anchor_dest = os.path.join(STATIC_TEMP, "triplet_anchor.png")
         cv2.imwrite(anchor_dest, clahe_anchor_img)
 
@@ -201,7 +213,7 @@ def verify_pair_signature():
     raw_path = os.path.join(STATIC_TEMP, uploaded_file.filename)
     uploaded_file.save(raw_path)
 
-    # Preprocess using MinMax (for softmax base model)
+    # Preprocess using MinMax (for base model)
     processed_img = preprocess_signature(raw_path, preprocessing_type="minmax")
     uploaded_emb = base_model.predict(np.expand_dims(processed_img, axis=0), verbose=0)[0]
 
@@ -215,32 +227,25 @@ def verify_pair_signature():
             min_dist = dist
             closest_ref = ref["path"]
 
-    # Preprocess the closest reference
-    ref_img = preprocess_signature(closest_ref, preprocessing_type="minmax")
-    ref_img_tensor = np.expand_dims(ref_img, axis=0)
-    uploaded_tensor = np.expand_dims(processed_img, axis=0)
-
-    # Predict using softmax pair model
-    result = base_siamese_model.predict([uploaded_tensor, ref_img_tensor], verbose=0)
-    # Load threshold (ideally from file or set here if fixed)
-    YOUDEN_THRESHOLD = 0.5000  # Replace with actual threshold used in evaluation
-    score = float(result[0][0])  # safely extract scalar from shape (1, 1)
-    predicted_class = int(score > YOUDEN_THRESHOLD)
-
     # Save both images for preview
     uploaded_preview = f"pair_uploaded_{uploaded_file.filename}"
     ref_preview = f"pair_reference_{os.path.basename(closest_ref)}"
 
-    cv2.imwrite(os.path.join(STATIC_TEMP, uploaded_preview), processed_img.squeeze() * 255)
-    cv2.imwrite(os.path.join(STATIC_TEMP, ref_preview), ref_img.squeeze() * 255)
+    # Fix: convert normalized float image to uint8 before saving
+    cv2.imwrite(
+        os.path.join(STATIC_TEMP, uploaded_preview),
+        (processed_img.squeeze() * 255).astype(np.uint8)
+    )
+
+    # No need to multiply ref_img by 255 — already uint8
+    ref_img = cv2.imread(closest_ref, cv2.IMREAD_GRAYSCALE)
+    cv2.imwrite(os.path.join(STATIC_TEMP, ref_preview), ref_img)
 
     return jsonify({
-        "result": "Genuine" if predicted_class == 1 else "Forged",
         "distance": round(float(min_dist), 4),
         "uploaded_image_url": f"/static/temp/{uploaded_preview}",
         "reference_image_url": f"/static/temp/{ref_preview}"
     })
-
 
 @app.route("/static/temp/<path:filename>")
 def serve_temp(filename):

@@ -3,3 +3,4 @@
 /outputs
 /__pycache__
 /signature_verification/backend/venv/
+.DS_Store

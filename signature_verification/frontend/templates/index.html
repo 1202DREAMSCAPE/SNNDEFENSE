@@ -10,48 +10,51 @@
   <div class="max-w-5xl mx-auto space-y-8">
     <h1 class="text-3xl font-bold text-center text-blue-700">Signature Verification System</h1>
 
-    <!-- Base Model Form -->
-    <form id="base-form" method="POST" enctype="multipart/form-data" action="/base" class="bg-white rounded-lg shadow-md p-6 space-y-4">
-      <h2 class="text-xl font-semibold text-blue-600">Base Model (MinMax Preprocessing)</h2>
-      <label class="block text-sm font-medium">Select Writer ID:</label>
-      <select id="writer_id_base" name="writer_id" required class="writer-dropdown w-full p-2 border border-gray-300 rounded">
-        <option value="" disabled selected>Select a writer</option>
-      </select>
-      <label class="block text-sm font-medium">Upload Signature:</label>
-      <input type="file" id="signature_base" name="signature" accept="image/*" required onchange="previewFile(this, 'raw-preview-base')" class="w-full p-2 border border-gray-300 rounded"/>
-      <img id="raw-preview-base" class="hidden max-w-xs mt-3 rounded border border-gray-200" alt="Raw Image Preview"/>
-      <button id="base-btn" type="submit" class="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-2">
-        <svg id="base-spinner" class="hidden animate-spin h-5 w-5 text-white" viewBox="0 0 24 24">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-        </svg>
-        Verify with Base Model
-      </button>
-      <button type="button" onclick="showBasePair()" class="mt-2 px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700">🔍 Show Softmax Pairing</button>
-    </form>
-
-    <!-- Enhanced Model Form -->
-    <form id="enhanced-form" method="POST" enctype="multipart/form-data" action="/enhanced" class="bg-white rounded-lg shadow-md p-6 space-y-4">
-      <h2 class="text-xl font-semibold text-green-600">Enhanced Model (CLAHE Preprocessing)</h2>
-      <label class="block text-sm font-medium">Select Writer ID:</label>
-      <select id="writer_id_enhanced" name="writer_id" required class="writer-dropdown w-full p-2 border border-gray-300 rounded">
-        <option value="" disabled selected>Select a writer</option>
-      </select>
-      <label class="block text-sm font-medium">Upload Signature:</label>
-      <input type="file" id="signature_enhanced" name="signature" accept="image/*" required onchange="previewFile(this, 'raw-preview-enhanced')" class="w-full p-2 border border-gray-300 rounded"/>
-      <img id="raw-preview-enhanced" class="hidden max-w-xs mt-3 rounded border border-gray-200" alt="Raw Image Preview"/>
-      <button id="enhanced-btn" type="submit" class="mt-4 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 flex items-center gap-2">
-        <svg id="enhanced-spinner" class="hidden animate-spin h-5 w-5 text-white" viewBox="0 0 24 24">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-        </svg>
-        Verify with Enhanced Model
-      </button>
-      <button type="button" onclick="requestTripletExample()" class="mt-2 px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700">🔍 Show Triplet Sample</button>
-    </form>
+    <div class="flex flex-col lg:flex-row gap-6">
+      <!-- Base Model Form -->
+      <form id="base-form" method="POST" enctype="multipart/form-data" action="/base" class="bg-white rounded-lg shadow-md p-6 space-y-4 flex-1">
+        <h2 class="text-xl font-semibold text-blue-600">Base Model</h2>
+        <label class="block text-sm font-medium">Select Writer ID:</label>
+        <select id="writer_id_base" name="writer_id" required class="writer-dropdown w-full p-2 border border-gray-300 rounded">
+          <option value="" disabled selected>Select a writer</option>
+        </select>
+        <label class="block text-sm font-medium">Upload Signature:</label>
+        <input type="file" id="signature_base" name="signature" accept="image/*" required onchange="previewFile(this, 'raw-preview-base')" class="w-full p-2 border border-gray-300 rounded"/>
+        <img id="raw-preview-base" class="hidden max-w-xs mt-3 rounded border border-gray-200" alt="Raw Image Preview"/>
+        <button id="base-btn" type="submit" class="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-2">
+          <svg id="base-spinner" class="hidden animate-spin h-5 w-5 text-white" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+          </svg>
+          Verify with Base Model
+        </button>
+        <button type="button" onclick="showBasePair()" class="mt-2 px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700">🔍 Show Softmax Pairing</button>
+      </form>
+    
+      <!-- Enhanced Model Form -->
+      <form id="enhanced-form" method="POST" enctype="multipart/form-data" action="/enhanced" class="bg-white rounded-lg shadow-md p-6 space-y-4 flex-1">
+        <h2 class="text-xl font-semibold text-green-600">Enhanced Model</h2>
+        <label class="block text-sm font-medium">Select Writer ID:</label>
+        <select id="writer_id_enhanced" name="writer_id" required class="writer-dropdown w-full p-2 border border-gray-300 rounded">
+          <option value="" disabled selected>Select a writer</option>
+        </select>
+        <label class="block text-sm font-medium">Upload Signature:</label>
+        <input type="file" id="signature_enhanced" name="signature" accept="image/*" required onchange="previewFile(this, 'raw-preview-enhanced')" class="w-full p-2 border border-gray-300 rounded"/>
+        <img id="raw-preview-enhanced" class="hidden max-w-xs mt-3 rounded border border-gray-200" alt="Raw Image Preview"/>
+        <button id="enhanced-btn" type="submit" class="mt-4 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 flex items-center gap-2">
+          <svg id="enhanced-spinner" class="hidden animate-spin h-5 w-5 text-white" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+          </svg>
+          Verify with Enhanced Model
+        </button>
+        <button type="button" onclick="requestTripletExample()" class="mt-2 px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700">🔍 Show Triplet Sample</button>
+      </form>
+    </div>    
 
 <!-- Base Modal (Softmax Pair) -->
-<div id="pair-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden justify-center items-center z-50">
+<div id="pair-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex justify-center items-center z-50">
+
   <div class="bg-white rounded-lg p-6 max-w-3xl mx-auto relative">
     <button onclick="closePairModal()" class="absolute top-2 right-2 text-gray-500 hover:text-black">✖</button>
     <h2 class="text-lg font-semibold text-center mb-4">Softmax Pair Comparison</h2>
@@ -71,7 +74,7 @@
 
     
     <!-- Triplet Modal -->
-<div id="triplet-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden justify-center items-center z-50">
+    <div id="triplet-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex justify-center items-center z-50">
   <div class="bg-white rounded-lg p-6 max-w-4xl mx-auto relative">
     <button onclick="closeTripletModal()" class="absolute top-2 right-2 text-gray-500 hover:text-black">✖</button>
     <h2 class="text-lg font-semibold text-center mb-4">Triplet Visualization</h2>
@@ -108,12 +111,12 @@
           <p id="raw-label" class="hidden mt-2 text-sm text-gray-500">Raw Uploaded Image</p>
         </div>
         <div>
-          <img id="clahe-preview" class="hidden w-full rounded border border-gray-300" alt="CLAHE Enhanced"/>
-          <p id="clahe-label" class="hidden mt-2 text-sm text-gray-500">CLAHE Enhanced Image</p>
-        </div>
-        <div>
           <img id="minmax-preview" class="hidden w-full rounded border border-gray-300" alt="MinMax Normalized"/>
           <p id="minmax-label" class="hidden mt-2 text-sm text-gray-500">MinMax Normalized Image</p>
+        </div>
+        <div>
+          <img id="clahe-preview" class="hidden w-full rounded border border-gray-300" alt="CLAHE Enhanced"/>
+          <p id="clahe-label" class="hidden mt-2 text-sm text-gray-500">CLAHE Enhanced Image</p>
         </div>
       </div>
     </div>

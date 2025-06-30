@@ -108,24 +108,20 @@ def evaluate_classification_metrics(y_true, distances, dataset_name=None, output
     """
     Evaluate binary classification metrics using F1-optimal threshold.
     """
-    # Normalize distances to similarity scores
-    scores = 1 - distances / np.max(distances)
-
-    # --- F1-Optimal Threshold selection ---
+    # F1-optimal threshold on raw normalized distances
     best_threshold = 0.0
     best_f1 = 0.0
-    thresholds = np.linspace(0, 1, 2001)
+    thresholds = np.linspace(0, 2, 2001)  # distance range in [0, 2]
 
     for thresh in thresholds:
-        y_pred_temp = (scores >= thresh).astype(int)
+        y_pred_temp = (distances <= thresh).astype(int)
         f1 = f1_score(y_true, y_pred_temp, zero_division=0)
         if f1 > best_f1:
             best_f1 = f1
             best_threshold = thresh
 
     f1_threshold = best_threshold
-    
-    y_pred = (scores >= f1_threshold).astype(int)
+    y_pred = (distances <= f1_threshold).astype(int)
 
     # Confusion matrix
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
@@ -139,7 +135,7 @@ def evaluate_classification_metrics(y_true, distances, dataset_name=None, output
     tnr = tn / (tn + fp + 1e-6)
     f1 = f1_score(y_true, y_pred, zero_division=0)
     try:
-        rocauc = roc_auc_score(y_true, scores)
+        rocauc = roc_auc_score(y_true, -distances)
     except Exception:
         rocauc = float('nan')
 
@@ -157,6 +153,7 @@ def evaluate_classification_metrics(y_true, distances, dataset_name=None, output
             f.write(f"FRR (FN Rate)  : {frr:.4f}\n")
             f.write(f"TPR: {tpr:.4f}\n")
             f.write(f"TNR: {tnr:.4f}\n")
+            f.write(f"F1 Threshold   : {f1_threshold:.4f}\n")
         print(f"📝 Metrics saved to {filepath}")
 
     return {
@@ -372,9 +369,13 @@ for dataset_name, config in datasets.items():
         embedding_model.load_weights(f"{weights_dir}/{dataset_name}_base_run{run_id}.weights.h5")
         print(f"✅ Loaded embedding weights from {weights_dir}/{dataset_name}_base_run{run_id}.weights.h5")
 
-        # Generate embeddings
+       # Generate embeddings
         emb1 = embedding_model.predict(test_img1, batch_size=128)
         emb2 = embedding_model.predict(test_img2, batch_size=128)
+
+        # 🔧 Fix: Normalize both sets
+        emb1 = emb1 / (np.linalg.norm(emb1, axis=1, keepdims=True) + 1e-10)
+        emb2 = emb2 / (np.linalg.norm(emb2, axis=1, keepdims=True) + 1e-10)
 
         # Save reference embeddings
         reference_embeddings_path = f"{weights_dir}/{dataset_name}_reference_embeddings_run{run_id}.npy"
