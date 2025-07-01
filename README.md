@@ -120,7 +120,7 @@ http://127.0.0.1:5000/
 - 🔁 Select writer and upload signature
 - 🧠 Choose Base (MinMax) or Enhanced (CLAHE + Triplet)
 - 🧪 Triplet Viewer to see Anchor, Positive, and Negative comparisons
-- 📊 Shows distances and confidence values
+- 📊 Shows distances
 
 ---
 

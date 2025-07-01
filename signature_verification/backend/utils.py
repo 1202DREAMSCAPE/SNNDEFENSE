@@ -27,54 +27,74 @@ def calculate_f1_threshold(distances, labels):
 
     return best_thr
 
-def verify_signature(claimed_writer_id, uploaded_signature_path, reference_embeddings, model, model_type):
+def verify_signature(
+    claimed_writer_id,
+    reference_embeddings,
+    model,
+    model_type="enhanced",
+    uploaded_signature_path=None,
+    uploaded_emb=None,
+    threshold=None
+):
     """
-    Verify the authenticity of a signature using model-specific optimal threshold.
-    Handles both base (single embedding) and enhanced (list of dicts) models.
+    Verifies a signature with global writer comparison and rejection classification.
+    Returns result, distance, threshold, closest_writer, and rejection_type.
     """
-    # Use hardcoded optimal thresholds based on model type
-    if model_type == 'base':
-        threshold = 0.4982339  
-    elif model_type == 'enhanced':
-        threshold = 0.827 
+
+    # Set threshold if not provided
+    if threshold is None:
+        threshold = 0.827 if model_type == "enhanced" else 0.4982339
+
+    # Step 1: Generate embedding if not provided
+    if uploaded_emb is None:
+        if uploaded_signature_path is None:
+            raise ValueError("Must provide uploaded_signature_path or uploaded_emb.")
+        img, _ = preprocess_signature(
+            uploaded_signature_path,
+            preprocessing_type="clahe" if model_type == "enhanced" else "minmax"
+        )
+        raw_emb = model.predict(np.expand_dims(img, axis=0), verbose=0)[0].flatten()
+        uploaded_emb = raw_emb / (np.linalg.norm(raw_emb) + 1e-10)
+
+    # Step 2: Find closest writer (across all)
+    min_global_dist = float("inf")
+    closest_writer = None
+
+    for writer, refs in reference_embeddings.items():
+        for ref in refs:
+            ref_emb = ref["embedding"] / (np.linalg.norm(ref["embedding"]) + 1e-10)
+            dist = np.linalg.norm(uploaded_emb - ref_emb)
+            if dist < min_global_dist:
+                min_global_dist = dist
+                closest_writer = writer
+
+    # Step 3: Find min distance to claimed_writer_id
+    min_claimed_dist = float("inf")
+    if claimed_writer_id in reference_embeddings:
+        for ref in reference_embeddings[claimed_writer_id]:
+            ref_emb = ref["embedding"] / (np.linalg.norm(ref["embedding"]) + 1e-10)
+            dist = np.linalg.norm(uploaded_emb - ref_emb)
+            if dist < min_claimed_dist:
+                min_claimed_dist = dist
+
     else:
-        raise ValueError("model_type must be 'base' or 'enhanced'")
-    
-    # Preprocess the uploaded signature
-    uploaded_signature, _ = preprocess_signature(
-        uploaded_signature_path,
-        preprocessing_type="minmax" if model_type == "base" else "clahe"
-    )
+        # If claimed writer has no references
+        min_claimed_dist = float("inf")
 
+    # Step 4: Apply threshold logic
+    distance = min_claimed_dist
+    is_authentic = (closest_writer == claimed_writer_id) and (distance <= threshold)
 
-    # Generate embedding for uploaded signature
-    uploaded_emb = model.predict(np.expand_dims(uploaded_signature, axis=0), verbose=0)[0].flatten()
-
-    # Get all reference embeddings for the claimed writer
-    reference_objs = reference_embeddings.get(claimed_writer_id)
-    if reference_objs is None:
-        return {"error": f"Writer ID {claimed_writer_id} not found."}
-
-    # Determine if it's a base model (single np.array) or enhanced (list of dicts)
-    if isinstance(reference_objs, np.ndarray):
-        # Base model: single reference embedding
-        distance = np.linalg.norm(reference_objs.flatten() - uploaded_emb)
+    # Step 5: Determine rejection classification
+    if closest_writer == claimed_writer_id:
+        rejection_type = "true_accept" if distance <= threshold else "false_rejection"
     else:
-        # Enhanced model: list of embeddings
-        min_dist = float("inf")
-        for ref in reference_objs:
-            dist = np.linalg.norm(ref["embedding"] - uploaded_emb)
-            if dist < min_dist:
-                min_dist = dist
-        distance = min_dist
-
-    # Decision
-    is_authentic = distance <= threshold
+        rejection_type = "false_acceptance" if distance <= threshold else "true_reject"
 
     return {
         "result": "Genuine" if is_authentic else "Forged",
-        "distance": float(distance),
+        "distance": float(round(distance, 4)),
         "threshold": float(threshold),
-        "confidence": float(1 - (distance / threshold)) if is_authentic else float(distance / threshold)
+        "closest_writer": closest_writer,
+        "rejection_type": rejection_type
     }
-

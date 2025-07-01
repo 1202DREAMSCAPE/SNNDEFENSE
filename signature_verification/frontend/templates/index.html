@@ -54,17 +54,16 @@
 
 <!-- Base Modal (Softmax Pair) -->
 <div id="pair-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex justify-center items-center z-50">
-
   <div class="bg-white rounded-lg p-6 max-w-3xl mx-auto relative">
     <button onclick="closePairModal()" class="absolute top-2 right-2 text-gray-500 hover:text-black">✖</button>
     <h2 class="text-lg font-semibold text-center mb-4">Softmax Pair Comparison</h2>
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 justify-items-center">
       <div>
-        <img id="pair-uploaded" class="hidden rounded border" />
+        <img id="pair-uploaded" class="hidden w-48 h-48 object-contain rounded border" />
         <p class="text-sm text-center mt-2">Uploaded</p>
       </div>
       <div>
-        <img id="pair-reference" class="hidden rounded border" />
+        <img id="pair-reference" class="hidden w-48 h-48 object-contain rounded border" />
         <p class="text-sm text-center mt-2">Reference</p>
       </div>
     </div>
@@ -72,23 +71,22 @@
   </div>
 </div>
 
-    
-    <!-- Triplet Modal -->
-    <div id="triplet-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex justify-center items-center z-50">
+<!-- Triplet Modal -->
+<div id="triplet-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex justify-center items-center z-50">
   <div class="bg-white rounded-lg p-6 max-w-4xl mx-auto relative">
     <button onclick="closeTripletModal()" class="absolute top-2 right-2 text-gray-500 hover:text-black">✖</button>
     <h2 class="text-lg font-semibold text-center mb-4">Triplet Visualization</h2>
-    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 justify-items-center">
       <div>
-        <img id="positive-img" class="hidden rounded border" />
+        <img id="positive-img" class="hidden w-48 h-48 object-contain rounded border" />
         <p class="text-sm text-center mt-2">Positive</p>
       </div>
       <div>
-        <img id="anchor-img" class="hidden rounded border" />
+        <img id="anchor-img" class="hidden w-48 h-48 object-contain rounded border" />
         <p class="text-sm text-center mt-2">Anchor (Uploaded)</p>
       </div>
       <div>
-        <img id="negative-img" class="hidden rounded border" />
+        <img id="negative-img" class="hidden w-48 h-48 object-contain rounded border" />
         <p class="text-sm text-center mt-2">Negative</p>
       </div>
     </div>
@@ -96,15 +94,13 @@
   </div>
 </div>
 
-
     <!-- Results -->
     <div id="results" class="bg-white rounded-lg shadow-md p-6 hidden">
       <div class="text-center mt-6">
         <button id="reset-btn" class="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600">🔄 Restart / Reset</button>
       </div>
-      <h2 class="text-xl font-semibold text-purple-700 mt-4">Verification Results</h2>
-      <p id="result-text" class="mt-2 text-lg font-medium text-gray-700"></p>
-
+      <div class="text-purple-800 font-semibold text-lg">Verification Results</div>
+      <ul id="results-list" class="space-y-1 text-sm mt-2 text-gray-700"></ul>
       <div id="image-results" class="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-6 text-center">
         <div>
           <img id="raw-preview" class="hidden w-full rounded border border-gray-300" alt="Raw Image"/>
@@ -113,10 +109,12 @@
         <div>
           <img id="minmax-preview" class="hidden w-full rounded border border-gray-300" alt="MinMax Normalized"/>
           <p id="minmax-label" class="hidden mt-2 text-sm text-gray-500">MinMax Normalized Image</p>
+          <p id="minmax-edge" class="hidden mt-1 text-xs text-gray-600"></p>
         </div>
         <div>
           <img id="clahe-preview" class="hidden w-full rounded border border-gray-300" alt="CLAHE Enhanced"/>
           <p id="clahe-label" class="hidden mt-2 text-sm text-gray-500">CLAHE Enhanced Image</p>
+          <p id="clahe-edge" class="hidden mt-1 text-xs text-gray-600"></p>
         </div>
       </div>
     </div>
@@ -176,12 +174,73 @@
       const data = await response.json();
       document.getElementById("results").classList.remove("hidden");
 
-      document.getElementById("result-text").innerHTML = `
-        ✅ <strong>Result:</strong> ${data.result}<br>
-        🖋️ <strong>Distance:</strong> ${data.distance.toFixed(4)}<br>
-        🎯 <strong>Threshold:</strong> ${data.threshold.toFixed(4)}<br>
-        📊 <strong>Confidence:</strong> ${data.confidence.toFixed(2)}
-      `;
+      const claimedWriter = document.getElementById("writer_id_enhanced").value.trim();
+      const closestWriter = data.closest_writer.trim();
+
+      const closestWriterColor = claimedWriter === closestWriter ? "green" : "red";
+
+      // Build rejection type line
+      let rejectionLine = "";
+      switch (data.rejection_type) {
+        case "false_acceptance":
+          rejectionLine = `
+            🔴 <strong>False Acceptance (SOP 3 Failure):</strong> 
+            The signature was <strong>incorrectly accepted</strong> even though it does not belong to <strong>${data.claimed_writer_id}</strong>.<br>
+            Based on the rule <code>distance ≤ best_threshold</code>, the system classified this as genuine due to a low distance.<br>
+            This reflects a thresholding failure — the distance was misleadingly low for a forgery.
+          `;
+          break;
+
+        case "false_rejection":
+          rejectionLine = `
+            🟠 <strong>False Rejection (SOP 3 Failure):</strong> 
+            A genuine signature from <strong>${data.claimed_writer_id}</strong> was <strong>incorrectly rejected</strong>.<br>
+            According to <code>distance ≤ best_threshold</code>, the system classified this as a forgery due to a high distance.<br>
+            This suggests the threshold was too strict for this writer’s variation.
+          `;
+          break;
+
+        case "true_accept":
+          rejectionLine = `
+            🟢 <strong>True Acceptance (SOP 3 Success):</strong> 
+            The system <strong>correctly verified</strong> the genuine signature as belonging to <strong>${data.claimed_writer_id}</strong>.<br>
+            The distance fell within the threshold: <code>distance ≤ best_threshold</code>.
+          `;
+          break;
+
+        case "true_reject":
+          rejectionLine = `
+            🟢 <strong>True Rejection (SOP 3 Success):</strong> 
+            The system <strong>correctly rejected</strong> the signature as a forgery.<br>
+            The distance exceeded the threshold, satisfying the rule: <code>distance > best_threshold</code>.
+          `;
+          break;
+      }
+
+
+      const resultsList = document.getElementById("results-list");
+        resultsList.innerHTML = `
+          <li>✅ <strong>Result:</strong> ${
+            data.result === "genuine"
+              ? "Accepted as Genuine"
+              : "Rejected as Forgery"
+          }</li>
+
+          <li>✏️ <strong>Distance:</strong> ${data.distance.toFixed(4)}</li>
+          <li>⏱️ <strong>Threshold:</strong> ${data.threshold.toFixed(4)}</li>
+
+          <li>🔁 <strong>Threshold Rule:</strong> ${
+            data.result === "genuine"
+              ? `Distance ≤ Threshold → Accepted`
+              : `Distance > Threshold → Rejected`
+          }</li>
+          <li>👤 <strong>Identity Match:</strong> ${
+            data.identity_match
+              ? "✅ Closest writer matches the selected writer"
+              : "❌ Closest writer is different from selected writer"
+          }</li>
+          <li>${rejectionLine}</li>
+        `;
 
       const previews = {
         raw: "raw-preview",
@@ -201,36 +260,91 @@
         } else {
           img.classList.add("hidden");
           label.classList.add("hidden");
-        }
+
+          const edgeEl = document.getElementById(`${type}-edge`);
+          edgeEl.classList.add("hidden");
+        } 
+      }
+
+      // Show edge counts if available
+      if (data.minmax_edge_count !== undefined) {
+        const minmaxEdge = document.getElementById("minmax-edge");
+        minmaxEdge.innerText = `🧮 Edge Count: ${data.minmax_edge_count}`;
+        minmaxEdge.classList.remove("hidden");
+      }
+
+      if (data.clahe_edge_count !== undefined) {
+        const claheEdge = document.getElementById("clahe-edge");
+        claheEdge.innerText = `🧮 Edge Count: ${data.clahe_edge_count}`;
+        claheEdge.classList.remove("hidden");
       }
     }
 
-    function showTripletImages(anchorURL, positiveURL, negativeURL, apDist = null, anDist = null) {
+    function showTripletImages(anchorURL, positiveURL, negativeURL, apDist = null, anDist = null, claimedWriter = null, closestWriter = null) {
       const timestamp = new Date().getTime();
     
-      // Add timestamp to force reload and avoid browser cache
       document.getElementById("anchor-img").src = anchorURL + `?t=${timestamp}`;
       document.getElementById("positive-img").src = positiveURL + `?t=${timestamp}`;
       document.getElementById("negative-img").src = negativeURL + `?t=${timestamp}`;
     
-      // Show image elements
       document.getElementById("anchor-img").classList.remove("hidden");
       document.getElementById("positive-img").classList.remove("hidden");
       document.getElementById("negative-img").classList.remove("hidden");
     
-      // Show distances
       const stats = document.getElementById("triplet-stats");
-      if (apDist !== null && anDist !== null) {
-        stats.innerHTML = `
-          🟡 <strong>Anchor–Positive Distance:</strong> ${apDist}<br>
-          🔴 <strong>Anchor–Negative Distance:</strong> ${anDist}
-        `;
-      } else {
-        stats.innerHTML = "";
-      }
+      const sop2Explanation = renderSOP2Explanation(claimedWriter, closestWriter, "triplet");
     
+      const content = `
+        🟡 <strong>Anchor–Positive Distance:</strong> ${apDist}<br>
+        🔴 <strong>Anchor–Negative Distance:</strong> ${anDist}<br><br>
+        🪪 <strong>Selected Writer:</strong> ${claimedWriter}<br>
+        🧭 <strong>Closest Writer (by embedding):</strong> 
+        <span style="color: ${claimedWriter === closestWriter ? 'green' : 'red'}">${closestWriter}</span><br>
+        ${sop2Explanation}
+      `;
+    
+      stats.innerHTML = content;
       openTripletModal();
     }
+
+    async function requestTripletExample() {
+      const form = document.getElementById("enhanced-form");
+      const formData = new FormData(form);
+    
+      const fileInput = document.getElementById("signature_enhanced");
+      const uploadedFile = fileInput.files[0];
+      if (!uploadedFile) {
+        alert("Please upload a signature image first.");
+        return;
+      }
+    
+      const response = await fetch("/get_triplet_example", {
+        method: "POST",
+        body: formData
+      });      
+    
+      if (!response.ok) {
+        alert("❌ Failed to retrieve triplet example.");
+        return;
+      }
+    
+      const data = await response.json();
+    
+      if (data.anchor_url && data.positive_url && data.negative_url) {
+        showTripletImages(
+          data.anchor_url,
+          data.positive_url,
+          data.negative_url,
+          data.anchor_positive_dist,
+          data.anchor_negative_dist,
+          data.claimed_writer_id,
+          data.closest_writer
+        );
+      } else {
+        alert("⚠ Incomplete triplet data received.");
+      }      
+    }
+    
     
     function showPairComparison(response) {
       const modal = document.getElementById("pair-modal");
@@ -242,51 +356,25 @@
       uploadedImage.src = response.uploaded_image_url + "?t=" + timestamp;
       referenceImage.src = response.reference_image_url + "?t=" + timestamp;
     
-      // 🛠️ Ensure images are shown
       uploadedImage.classList.remove("hidden");
       referenceImage.classList.remove("hidden");
     
-      document.getElementById("pair-result-text").innerHTML = `
-        🧮 <strong>Embedding Distance:</strong> ${response.distance.toFixed(4)}
+      const sop2Explanation = renderSOP2Explanation(response.claimed_writer_id, response.closest_writer, "softmax");
+    
+      const resultHTML = `
+        🧮 <strong>Embedding Distance:</strong> ${response.distance.toFixed(4)}<br>
+        🪪 <strong>Selected Writer:</strong> ${response.claimed_writer_id}<br>
+        🧭 <strong>Closest Writer (by embedding):</strong> 
+        <span style="color: ${response.claimed_writer_id === response.closest_writer ? 'green' : 'red'}">
+          ${response.closest_writer}
+        </span><br>
+        ${sop2Explanation}
       `;
     
-      modal.classList.remove("hidden"); // Ensure modal is visible
-    }
-
-    async function requestTripletExample() {
-        const form = document.getElementById("enhanced-form");
-        const formData = new FormData(form);
-
-        const fileInput = document.getElementById("signature_enhanced");
-        const uploadedFile = fileInput.files[0];
-        if (!uploadedFile) {
-            alert("Please upload a signature image first.");
-            return;
-        }
-
-        // Add filename explicitly
-        formData.append("filename", uploadedFile.name);
-
-        const response = await fetch("/get_triplet_example", {
-            method: "POST",
-            body: formData
-        });
-
-        const data = await response.json();
-
-        if (data.anchor_url && data.positive_url && data.negative_url) {
-            showTripletImages(
-            data.anchor_url,
-            data.positive_url,
-            data.negative_url,
-            data.anchor_positive_dist,
-            data.anchor_negative_dist
-            );
-        } else {
-            alert("⚠ Could not generate triplet example.");
-        }
-        }
-      
+      document.getElementById("pair-result-text").innerHTML = resultHTML;
+      modal.classList.remove("hidden");
+    }    
+    
     async function showBasePair() {
           const form = document.getElementById("base-form");
           const formData = new FormData(form);
@@ -311,6 +399,29 @@
             alert("⚠ Pair comparison failed.");
           }
         }
+    
+      function renderSOP2Explanation(claimed_writer, closest_writer, source = "softmax") {
+          const isMatch = claimed_writer === closest_writer;
+        
+          if (isMatch) {
+            return `
+              <div class="mt-2 text-sm italic text-green-600">
+                ✅ The signature's embedding correctly aligns with the selected writer <strong>${claimed_writer}</strong>.  
+                This indicates a well-structured embedding space in the ${source}-based model.
+              </div>
+            `;
+          } else {
+            return `
+              <div class="mt-2 text-sm italic text-red-600">
+                ⚠️ Although the selected writer is <strong>${claimed_writer}</strong>,  
+                the embedding places this signature closer to <strong>${closest_writer}</strong>.  
+                This reflects identity confusion in the embedding space — an SOP 2 failure.  
+                The ${source}-based model struggles to form consistent identity clusters.
+              </div>
+            `;
+          }
+        }
+        
         
 
     document.getElementById("base-form").addEventListener("submit", async e => {
