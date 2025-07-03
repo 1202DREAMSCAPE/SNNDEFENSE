@@ -2,8 +2,52 @@ import cv2
 import numpy as np
 import os
 
-
 IMG_SHAPE = (155, 220, 1)
+
+def compute_cnr(image: np.ndarray, debug=False) -> float:
+    """
+    Compute the Contrast-to-Noise Ratio (CNR) of a preprocessed grayscale image.
+    Uses adaptive percentile thresholding with a fixed fallback for white backgrounds.
+    """
+
+    # Normalize to [0, 1] if needed
+    if image.max() > 1.0:
+        image = image / 255.0
+
+    # Squeeze in case image has channel dimension
+    if image.ndim > 2:
+        image = image.squeeze()
+
+    # Step 1: Adaptive threshold
+    thresh_val = np.percentile(image, 30)
+    signal_mask = image <= thresh_val
+    background_mask = ~signal_mask
+
+    # Step 2: Fallback if signal pixels are too few
+    if np.sum(signal_mask) < 50:
+        if debug: print("[DEBUG] Signal pixels too few, applying fallback threshold 0.75")
+        signal_mask = image <= 0.75
+        background_mask = image > 0.75
+
+    signal_pixels = image[signal_mask]
+    background_pixels = image[background_mask]
+
+    # Step 3: Validate masks
+    if len(signal_pixels) == 0 or len(background_pixels) == 0:
+        if debug: print("[DEBUG] Empty signal or background pixel set.")
+        return 0.0
+
+    sigma_background = np.std(background_pixels)
+    if sigma_background < 1e-5 or np.isnan(sigma_background):
+        if debug: print("[DEBUG] Background standard deviation is too low or NaN.")
+        return 0.0
+
+    mu_signal = np.mean(signal_pixels)
+    mu_background = np.mean(background_pixels)
+
+    cnr = abs(mu_signal - mu_background) / sigma_background
+    return round(float(cnr), 4)
+
 
 def preprocess_signature(image_path, preprocessing_type="clahe"):
     image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
@@ -11,7 +55,6 @@ def preprocess_signature(image_path, preprocessing_type="clahe"):
         raise ValueError(f"Could not read image from path: {image_path}")
 
     if preprocessing_type == "clahe":
-        # Ensure the image is in uint8 and 0–255 range
         if image.dtype != np.uint8:
             image = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
         processed = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4)).apply(image)
@@ -30,6 +73,6 @@ def preprocess_signature(image_path, preprocessing_type="clahe"):
     resized = cv2.resize(normalized, (220, 155))  # (W, H)
     final = np.expand_dims(resized, axis=-1)
 
-    edge_count = np.count_nonzero(cv2.Canny(processed, 50, 150))
-    return final, edge_count
-
+    # Replace edge count with CNR
+    cnr_value = compute_cnr(resized)
+    return final, cnr_value

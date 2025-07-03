@@ -9,7 +9,10 @@
 <body class="bg-gray-50 text-gray-800 min-h-screen p-6">
   <div class="max-w-5xl mx-auto space-y-8">
     <h1 class="text-3xl font-bold text-center text-blue-700">Signature Verification System</h1>
-
+    <button onclick="openSOP3Modal()" class="mt-4 px-4 py-2 bg-violet-600 text-center text-white text-sm rounded hover:bg-blue-700">
+      📊 View Model Metrics
+    </button>
+    
     <div class="flex flex-col lg:flex-row gap-6">
       <!-- Base Model Form -->
       <form id="base-form" method="POST" enctype="multipart/form-data" action="/base" class="bg-white rounded-lg shadow-md p-6 space-y-4 flex-1">
@@ -56,7 +59,7 @@
 <div id="pair-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex justify-center items-center z-50">
   <div class="bg-white rounded-lg p-6 max-w-3xl mx-auto relative">
     <button onclick="closePairModal()" class="absolute top-2 right-2 text-gray-500 hover:text-black">✖</button>
-    <h2 class="text-lg font-semibold text-center mb-4">Softmax Pair Comparison</h2>
+    <h2 class="text-lg font-semibold text-center mb-4">Softmax Pair Comparison (SOP 2)</h2>
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 justify-items-center">
       <div>
         <img id="pair-uploaded" class="hidden w-48 h-48 object-contain rounded border" />
@@ -64,7 +67,7 @@
       </div>
       <div>
         <img id="pair-reference" class="hidden w-48 h-48 object-contain rounded border" />
-        <p class="text-sm text-center mt-2">Reference</p>
+        <p class="text-sm text-center mt-2">Signature of Chosen Writer</p>
       </div>
     </div>
     <div id="pair-result-text" class="mt-4 text-center text-sm text-gray-700"></div>
@@ -75,11 +78,11 @@
 <div id="triplet-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex justify-center items-center z-50">
   <div class="bg-white rounded-lg p-6 max-w-4xl mx-auto relative">
     <button onclick="closeTripletModal()" class="absolute top-2 right-2 text-gray-500 hover:text-black">✖</button>
-    <h2 class="text-lg font-semibold text-center mb-4">Triplet Visualization</h2>
+    <h2 class="text-lg font-semibold text-center mb-4">Triplet Visualization (Enhancement 2)</h2>
     <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 justify-items-center">
       <div>
         <img id="positive-img" class="hidden w-48 h-48 object-contain rounded border" />
-        <p class="text-sm text-center mt-2">Positive</p>
+        <p class="text-sm text-center mt-2">Positive (Closest from the Selected Writer)</p>
       </div>
       <div>
         <img id="anchor-img" class="hidden w-48 h-48 object-contain rounded border" />
@@ -93,6 +96,17 @@
     <div id="triplet-stats" class="mt-4 text-center text-sm text-gray-700"></div>
   </div>
 </div>
+
+<!-- Closest Writer Modal -->
+<div id="closest-writer-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex justify-center items-center z-50">
+  <div class="bg-white rounded-lg p-6 max-w-md mx-auto relative">
+    <button onclick="closeClosestWriterModal()" class="absolute top-2 right-2 text-gray-500 hover:text-black">✖</button>
+    <h2 class="text-lg font-semibold text-center mb-4 text-red-600">🧭 Closest Writer Reference</h2>
+    <img id="closest-writer-img" src="" class="w-full max-h-[400px] object-contain rounded border" />
+    <p id="closest-writer-caption" class="text-sm text-center mt-2 text-gray-600"></p>
+  </div>
+</div>
+
 
     <!-- Results -->
     <div id="results" class="bg-white rounded-lg shadow-md p-6 hidden">
@@ -109,18 +123,87 @@
         <div>
           <img id="minmax-preview" class="hidden w-full rounded border border-gray-300" alt="MinMax Normalized"/>
           <p id="minmax-label" class="hidden mt-2 text-sm text-gray-500">MinMax Normalized Image</p>
-          <p id="minmax-edge" class="hidden mt-1 text-xs text-gray-600"></p>
+          <p id="minmax-cnr" class="hidden mt-1 text-xs text-gray-600">
+            <span class="text-gray-400">(higher = better contrast vs noise)</span>
+          </p>
         </div>
         <div>
           <img id="clahe-preview" class="hidden w-full rounded border border-gray-300" alt="CLAHE Enhanced"/>
           <p id="clahe-label" class="hidden mt-2 text-sm text-gray-500">CLAHE Enhanced Image</p>
-          <p id="clahe-edge" class="hidden mt-1 text-xs text-gray-600"></p>
+          <p id="clahe-cnr" class="hidden mt-1 text-xs text-gray-600">
+            <span class="text-gray-400">(higher = better contrast vs noise)</span>
+          </p>
         </div>
       </div>
     </div>
+
+    <!-- Metrics Modal -->
+<div id="sop3-modal" class="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center hidden z-50">
+  <div class="bg-white rounded-lg p-6 w-[700px] max-w-full shadow-lg">
+    <div class="flex justify-between items-center mb-4">
+      <h2 class="text-xl font-semibold">SOP 3: Model Metrics from Training</h2>
+      <button onclick="closeSOP3Modal()" class="text-gray-500 hover:text-red-500 text-xl font-bold">&times;</button>
+    </div>
+    <table class="w-full text-sm border border-gray-400 text-center">
+      <thead class="bg-gray-100 font-semibold">
+        <tr>
+          <th class="border p-2">Model Variant</th>
+          <th class="border p-2">Accuracy</th>
+          <th class="border p-2">FAR</th>
+          <th class="border p-2">FRR</th>
+          <th class="border p-2">F1-SCORE</th>
+          <th class="border p-2">Remarks</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="border p-2 font-medium text-left">Baseline Siamese Neural Network</td>
+          <td class="border p-2">0.71</td>
+          <td class="border p-2">0.22</td>
+          <td class="border p-2">0.36</td>
+          <td class="border p-2">0.68</td>
+          <td class="border p-2">Initial baseline without enhancements</td>
+        </tr>
+        <tr>
+          <td class="border p-2 text-left">SNN + CLAHE</td>
+          <td class="border p-2">0.74</td>
+          <td class="border p-2">0.18</td>
+          <td class="border p-2">0.31</td>
+          <td class="border p-2">0.72</td>
+          <td class="border p-2">Improved visibility from preprocessing</td>
+        </tr>
+        <tr>
+          <td class="border p-2 text-left">SNN + Triplet Loss</td>
+          <td class="border p-2">0.77</td>
+          <td class="border p-2">0.16</td>
+          <td class="border p-2">0.29</td>
+          <td class="border p-2">0.75</td>
+          <td class="border p-2">Better distance learning</td>
+        </tr>
+        <tr>
+          <td class="border p-2 text-left">SNN + Threshold</td>
+          <td class="border p-2">0.79</td>
+          <td class="border p-2">0.12</td>
+          <td class="border p-2">0.26</td>
+          <td class="border p-2">0.78</td>
+          <td class="border p-2">F1-optimal thresholding boosts decisions</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="mt-4 text-xs text-gray-600 italic">These results are derived from training metrics.</p>
+  </div>
+</div>
   </div>
 
   <script>
+    function openSOP3Modal() {
+      document.getElementById("sop3-modal").classList.remove("hidden");
+    }
+    
+    function closeSOP3Modal() {
+      document.getElementById("sop3-modal").classList.add("hidden");
+    }
+    
     function openPairModal() {
       document.getElementById("pair-modal").classList.remove("hidden");
     }
@@ -261,26 +344,26 @@
           img.classList.add("hidden");
           label.classList.add("hidden");
 
-          const edgeEl = document.getElementById(`${type}-edge`);
-          edgeEl.classList.add("hidden");
+          const cnrEl = document.getElementById(`${type}-cnr`);
+          if (cnrEl) cnrEl.classList.add("hidden");
         } 
       }
 
-      // Show edge counts if available
-      if (data.minmax_edge_count !== undefined) {
-        const minmaxEdge = document.getElementById("minmax-edge");
-        minmaxEdge.innerText = `🧮 Edge Count: ${data.minmax_edge_count}`;
-        minmaxEdge.classList.remove("hidden");
+      // Show cnr if available
+      if (data.minmax_cnr !== undefined) {
+        const minmaxCnr = document.getElementById("minmax-cnr");
+        minmaxCnr.innerText = `📈 CNR: ${data.minmax_cnr}`;
+        minmaxCnr.classList.remove("hidden");
       }
-
-      if (data.clahe_edge_count !== undefined) {
-        const claheEdge = document.getElementById("clahe-edge");
-        claheEdge.innerText = `🧮 Edge Count: ${data.clahe_edge_count}`;
-        claheEdge.classList.remove("hidden");
-      }
+      
+      if (data.clahe_cnr !== undefined) {
+        const claheCnr = document.getElementById("clahe-cnr");
+        claheCnr.innerText = `📈 CNR: ${data.clahe_cnr}`;
+        claheCnr.classList.remove("hidden");
+      }      
     }
 
-    function showTripletImages(anchorURL, positiveURL, negativeURL, apDist = null, anDist = null, claimedWriter = null, closestWriter = null) {
+    function showTripletImages(anchorURL, positiveURL, negativeURL, apDist = null, anDist = null, claimedWriter = null, closestWriter = null, closestWriterImgURL = null) {
       const timestamp = new Date().getTime();
     
       document.getElementById("anchor-img").src = anchorURL + `?t=${timestamp}`;
@@ -294,7 +377,7 @@
       const stats = document.getElementById("triplet-stats");
       const sop2Explanation = renderSOP2Explanation(claimedWriter, closestWriter, "triplet");
     
-      const content = `
+      let content = `
         🟡 <strong>Anchor–Positive Distance:</strong> ${apDist}<br>
         🔴 <strong>Anchor–Negative Distance:</strong> ${anDist}<br><br>
         🪪 <strong>Selected Writer:</strong> ${claimedWriter}<br>
@@ -303,9 +386,20 @@
         ${sop2Explanation}
       `;
     
+      // ✅ Add View Closest Writer button if there's a mismatch
+      if (claimedWriter !== closestWriter && closestWriterImgURL) {
+        content += `
+          <button onclick="showClosestWriterImage('${closestWriterImgURL}', '${closestWriter}')"
+            class="mt-2 text-blue-600 underline text-xs hover:text-blue-800">
+            📷 View Closest Writer Reference
+          </button>
+        `;
+      }
+    
       stats.innerHTML = content;
       openTripletModal();
     }
+        
 
     async function requestTripletExample() {
       const form = document.getElementById("enhanced-form");
@@ -338,7 +432,8 @@
           data.anchor_positive_dist,
           data.anchor_negative_dist,
           data.claimed_writer_id,
-          data.closest_writer
+          data.closest_writer,
+          data.closest_writer_image_url
         );
       } else {
         alert("⚠ Incomplete triplet data received.");
@@ -361,7 +456,7 @@
     
       const sop2Explanation = renderSOP2Explanation(response.claimed_writer_id, response.closest_writer, "softmax");
     
-      const resultHTML = `
+      let resultHTML = `
         🧮 <strong>Embedding Distance:</strong> ${response.distance.toFixed(4)}<br>
         🪪 <strong>Selected Writer:</strong> ${response.claimed_writer_id}<br>
         🧭 <strong>Closest Writer (by embedding):</strong> 
@@ -371,9 +466,22 @@
         ${sop2Explanation}
       `;
     
+      // ✅ Append view button if closest writer is different and image URL is available
+      if (
+        response.closest_writer !== response.claimed_writer_id &&
+        response.closest_writer_image_url
+      ) {
+        resultHTML += `
+          <button onclick="showClosestWriterImage('${response.closest_writer_image_url}', '${response.closest_writer}')"
+            class="mt-2 text-blue-600 underline text-xs hover:text-blue-800">
+            📷 View Closest Writer Reference
+          </button>
+        `;
+      }
+    
       document.getElementById("pair-result-text").innerHTML = resultHTML;
       modal.classList.remove("hidden");
-    }    
+    }       
     
     async function showBasePair() {
           const form = document.getElementById("base-form");
@@ -399,30 +507,54 @@
             alert("⚠ Pair comparison failed.");
           }
         }
-    
+        
+      function showClosestWriterImage(imageUrl, writerId) {
+          const modal = document.getElementById("closest-writer-modal");
+          const img = document.getElementById("closest-writer-img");
+          const caption = document.getElementById("closest-writer-caption");
+        
+          img.src = imageUrl + `?t=${Date.now()}`;
+          caption.innerHTML = `Closest Writer: <strong>writer_${writerId}</strong>`;
+          modal.classList.remove("hidden");
+        }
+        
+      function closeClosestWriterModal() {
+          document.getElementById("closest-writer-modal").classList.add("hidden");
+        }
+        
       function renderSOP2Explanation(claimed_writer, closest_writer, source = "softmax") {
           const isMatch = claimed_writer === closest_writer;
         
           if (isMatch) {
             return `
               <div class="mt-2 text-sm italic text-green-600">
-                ✅ The signature's embedding correctly aligns with the selected writer <strong>${claimed_writer}</strong>.  
-                This indicates a well-structured embedding space in the ${source}-based model.
+                ✅ The signature embedding is closest to the selected writer <strong>writer_${claimed_writer}</strong>. 
+                This indicates strong identity clustering in the ${source}-based embedding space.
               </div>
             `;
           } else {
-            return `
-              <div class="mt-2 text-sm italic text-red-600">
-                ⚠️ Although the selected writer is <strong>${claimed_writer}</strong>,  
-                the embedding places this signature closer to <strong>${closest_writer}</strong>.  
-                This reflects identity confusion in the embedding space — an SOP 2 failure.  
-                The ${source}-based model struggles to form consistent identity clusters.
-              </div>
-            `;
+            if (source === "triplet") {
+              return `
+                <div class="mt-2 text-sm italic text-red-600">
+                  ⚠️ The uploaded signature is from <strong>writer_${claimed_writer}</strong>, 
+                  but its embedding was found closer to <strong>writer_${closest_writer}</strong>.<br><br>
+                  In triplet loss, this may happen when:
+                  <ul class="list-disc list-inside text-xs text-gray-600 mt-1">
+                    <li>The uploaded signature is a genuine sample of another writer</li>
+                    <li>Or it is a forged signature that doesn't resemble the selected identity</li>
+                  </ul>
+                </div>
+              `;
+            } else {
+              return `
+                <div class="mt-2 text-sm italic text-red-600">
+                  ⚠️ The uploaded signature is from <strong>writer_${claimed_writer}</strong>, 
+                  but the model embedding aligned it closer to <strong>writer_${closest_writer}</strong>.<br><br>
+                </div>
+              `;
+            }
           }
-        }
-        
-        
+        }          
 
     document.getElementById("base-form").addEventListener("submit", async e => {
       e.preventDefault();

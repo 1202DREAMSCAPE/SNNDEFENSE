@@ -55,8 +55,8 @@ def verify_base():
     uploaded_file.save(raw_path)
 
     # Preprocess with MinMax and get edge count
-    minmax_img, minmax_edge_count = preprocess_signature(raw_path, preprocessing_type="minmax")
-    cv2.imwrite(minmax_path, minmax_img.squeeze() * 255)
+    minmax_img, minmax_cnr_value = preprocess_signature(raw_path, preprocessing_type="minmax")
+    cv2.imwrite(minmax_path, (minmax_img.squeeze() * 255).astype(np.uint8))
 
     # Predict and normalize embedding
     raw_emb = base_model.predict(np.expand_dims(minmax_img, axis=0), verbose=0)[0].flatten()
@@ -103,10 +103,6 @@ def verify_base():
     else:
         rejection_type = "true_reject"
 
-    # Log to terminal and CSV
-    print(f"[BASE] Writer: {claimed_writer_id}, File: {uploaded_file.filename}, MinMax Edge Count: {minmax_edge_count}")
-    with open("edge_counts.csv", "a") as f:
-        f.write(f"base,{claimed_writer_id},{uploaded_file.filename},minmax,{minmax_edge_count}\n")
     with open("rejection_logs.csv", "a") as f:
         f.write(f"base,{claimed_writer_id},{uploaded_file.filename},{distance:.4f},{threshold:.4f},{closest_writer},{rejection_type}\n")
 
@@ -120,7 +116,7 @@ def verify_base():
         "raw_image_url": f"/static/temp/{uploaded_file.filename}",
         "minmax_image_url": f"/static/temp/minmax_{uploaded_file.filename}",
         "clahe_image_url": "",  # (CLAHE only for enhanced)
-        "minmax_edge_count": minmax_edge_count,
+        "minmax_cnr": round(minmax_cnr_value, 4),
         "closest_writer": closest_writer,
         "rejection_type": rejection_type,
         "claimed_writer_id": claimed_writer_id
@@ -139,11 +135,11 @@ def verify_enhanced():
     uploaded_file.save(raw_path)
 
     # CLAHE preprocessing + save
-    clahe_img, clahe_edge_count = preprocess_signature(raw_path, preprocessing_type="clahe")
-    cv2.imwrite(clahe_path, clahe_img.squeeze() * 255)
+    clahe_img, clahe_cnr_value = preprocess_signature(raw_path, preprocessing_type="clahe")
+    cv2.imwrite(clahe_path, (clahe_img.squeeze() * 255).astype(np.uint8))
 
-    # MinMax preprocessing (only for edge count display)
-    minmax_img, minmax_edge_count = preprocess_signature(raw_path, preprocessing_type="minmax")
+    # MinMax preprocessing (only for cnr display)
+    minmax_img, minmax_cnr_value = preprocess_signature(raw_path, preprocessing_type="minmax")
     cv2.imwrite(minmax_path, (minmax_img.squeeze() * 255).astype(np.uint8))
 
     # Get normalized embedding
@@ -198,11 +194,6 @@ def verify_enhanced():
     else:
         rejection_type = "true_reject"
 
-    # Logs
-    with open("edge_counts.csv", "a") as f:
-        f.write(f"enhanced,{claimed_writer_id},{uploaded_file.filename},clahe,{clahe_edge_count}\n")
-        f.write(f"enhanced,{claimed_writer_id},{uploaded_file.filename},minmax,{minmax_edge_count}\n")
-
     with open("verification_logs.csv", "a") as f:
         f.write(f"enhanced,{claimed_writer_id},{uploaded_file.filename},{distance:.4f},{threshold:.4f},{closest_writer},{rejection_type}\n")
 
@@ -221,8 +212,8 @@ def verify_enhanced():
         "raw_image_url": f"/static/temp/{uploaded_file.filename}",
         "clahe_image_url": f"/static/temp/clahe_{uploaded_file.filename}",
         "minmax_image_url": f"/static/temp/minmax_{uploaded_file.filename}",
-        "clahe_edge_count": clahe_edge_count,
-        "minmax_edge_count": minmax_edge_count,
+        "clahe_cnr": round(clahe_cnr_value, 4),
+        "minmax_cnr": round(minmax_cnr_value, 4),
         "claimed_writer_id": claimed_writer_id
     })
 
@@ -237,15 +228,14 @@ def get_triplet_example():
         anchor_path = os.path.join(STATIC_TEMP, filename)
         uploaded_file.save(anchor_path)
 
-        # ✅ Fix: Unpack the tuple
+        # Preprocess anchor
         anchor_img, _ = preprocess_signature(anchor_path, preprocessing_type="clahe")
-
-        # ✅ Use only the image for model prediction
         raw_emb = enhanced_model.predict(np.expand_dims(anchor_img, axis=0), verbose=0)[0].flatten()
-        anchor_emb = raw_emb / (np.linalg.norm(raw_emb) + 1e-10)  # L2 normalize
+        anchor_emb = raw_emb / (np.linalg.norm(raw_emb) + 1e-10)
 
-        # Determine closest writer overall
-        min_global_dist, closest_writer = float("inf"), None
+        # Find closest writer overall
+        min_global_dist = float("inf")
+        closest_writer = None
         for writer, refs in enhanced_reference_embeddings.items():
             for ref in refs:
                 ref_emb = ref["embedding"] / (np.linalg.norm(ref["embedding"]) + 1e-10)
@@ -254,43 +244,56 @@ def get_triplet_example():
                     min_global_dist = dist
                     closest_writer = writer
 
-        # Find closest positive (same writer)
+        # Find closest positive (from selected writer)
         min_pos_dist, pos_path = float("inf"), None
         for ref in enhanced_reference_embeddings[writer_id]:
-            ref_emb = ref["embedding"]
-            ref_emb = ref_emb / (np.linalg.norm(ref_emb) + 1e-10)
+            ref_emb = ref["embedding"] / (np.linalg.norm(ref["embedding"]) + 1e-10)
             dist = np.linalg.norm(anchor_emb - ref_emb)
             if dist < min_pos_dist:
                 min_pos_dist = dist
                 pos_path = ref["path"]
 
-        # Find closest negative (different writer)
+        # Find closest negative (from other writers)
         min_neg_dist, neg_path = float("inf"), None
         for other_writer, refs in enhanced_reference_embeddings.items():
             if other_writer == writer_id:
                 continue
             for ref in refs:
-                ref_emb = ref["embedding"]
-                ref_emb = ref_emb / (np.linalg.norm(ref_emb) + 1e-10)
+                ref_emb = ref["embedding"] / (np.linalg.norm(ref["embedding"]) + 1e-10)
                 dist = np.linalg.norm(anchor_emb - ref_emb)
                 if dist < min_neg_dist:
                     min_neg_dist = dist
                     neg_path = ref["path"]
 
+        # Get image from closest writer (system-identified identity)
+        closest_writer_img_path = None
+        for ref in enhanced_reference_embeddings[closest_writer]:
+            ref_emb = ref["embedding"] / (np.linalg.norm(ref["embedding"]) + 1e-10)
+            dist = np.linalg.norm(anchor_emb - ref_emb)
+            if abs(dist - min_global_dist) < 1e-6:
+                closest_writer_img_path = ref["path"]
+                break
+
+        # Save preview images
         def save_preview_image(src, dest_name):
             img = cv2.imread(src, cv2.IMREAD_GRAYSCALE)
             dest = os.path.join(STATIC_TEMP, dest_name)
             cv2.imwrite(dest, img)
             return f"/static/temp/{dest_name}"
 
-        # ✅ Convert CLAHE-enhanced anchor back to uint8 for preview
-        clahe_anchor_img = (anchor_img * 255).astype("uint8")
         anchor_dest = os.path.join(STATIC_TEMP, "triplet_anchor.png")
-        cv2.imwrite(anchor_dest, clahe_anchor_img)
-
+        cv2.imwrite(anchor_dest, (anchor_img.squeeze() * 255).astype(np.uint8))
         anchor_url = "/static/temp/triplet_anchor.png"
         positive_url = save_preview_image(pos_path, "triplet_positive.png")
         negative_url = save_preview_image(neg_path, "triplet_negative.png")
+
+        # Save closest writer image (if different)
+        closest_writer_url = None
+        if closest_writer_img_path:
+            closest_img = cv2.imread(closest_writer_img_path, cv2.IMREAD_GRAYSCALE)
+            preview_path = os.path.join(STATIC_TEMP, "triplet_closest_writer.png")
+            cv2.imwrite(preview_path, closest_img)
+            closest_writer_url = "/static/temp/triplet_closest_writer.png"
 
         return jsonify({
             "anchor_url": anchor_url,
@@ -300,6 +303,7 @@ def get_triplet_example():
             "anchor_negative_dist": float(round(min_neg_dist, 4)),
             "claimed_writer_id": writer_id,
             "closest_writer": closest_writer,
+            "closest_writer_image_url": closest_writer_url
         })
 
     except Exception as e:
@@ -319,20 +323,19 @@ def verify_pair_signature():
     raw_path = os.path.join(STATIC_TEMP, uploaded_file.filename)
     uploaded_file.save(raw_path)
 
-    # ✅ MinMax preprocessing
+    # MinMax preprocessing
     processed_img, _ = preprocess_signature(raw_path, preprocessing_type="minmax")
-    cv2.imwrite(
-        os.path.join(STATIC_TEMP, f"pair_uploaded_{uploaded_file.filename}"),
-        (processed_img.squeeze() * 255).astype(np.uint8)
-    )
+    preview_uploaded_path = os.path.join(STATIC_TEMP, f"pair_uploaded_{uploaded_file.filename}")
+    cv2.imwrite(preview_uploaded_path, (processed_img.squeeze() * 255).astype(np.uint8))
 
-    # ✅ Predict embedding and normalize
+    # Predict embedding and normalize
     raw_emb = base_model.predict(np.expand_dims(processed_img, axis=0), verbose=0)[0].flatten()
     uploaded_emb = raw_emb / (np.linalg.norm(raw_emb) + 1e-10)
 
-    # ✅ Global closest (embedding-based) — SOP 2 insight
+    # SOP2 — Find closest writer across all
     min_global_dist = float("inf")
     closest_writer = None
+    closest_writer_path = None
     for writer, refs in base_reference_embeddings.items():
         for ref in refs:
             ref_emb = ref["embedding"] / (np.linalg.norm(ref["embedding"]) + 1e-10)
@@ -340,8 +343,9 @@ def verify_pair_signature():
             if dist < min_global_dist:
                 min_global_dist = dist
                 closest_writer = writer
+                closest_writer_path = ref["path"]
 
-    # ✅ Claimed writer comparison (anchor–positive)
+    # Find closest ref from claimed writer
     min_dist = float("inf")
     closest_ref = None
     for ref in base_reference_embeddings[writer_id]:
@@ -351,10 +355,19 @@ def verify_pair_signature():
             min_dist = dist
             closest_ref = ref["path"]
 
-    # ✅ Save closest reference image
+    # Save claimed reference image
     ref_img = cv2.imread(closest_ref, cv2.IMREAD_GRAYSCALE)
     ref_preview_name = f"pair_reference_{os.path.basename(closest_ref)}"
-    cv2.imwrite(os.path.join(STATIC_TEMP, ref_preview_name), ref_img)
+    preview_ref_path = os.path.join(STATIC_TEMP, ref_preview_name)
+    cv2.imwrite(preview_ref_path, ref_img)
+
+    # Save closest writer preview image (if mismatched)
+    closest_writer_preview_url = None
+    if closest_writer != writer_id and closest_writer_path:
+        closest_img = cv2.imread(closest_writer_path, cv2.IMREAD_GRAYSCALE)
+        preview_path = os.path.join(STATIC_TEMP, "pair_closest_writer_reference.png")
+        cv2.imwrite(preview_path, closest_img)
+        closest_writer_preview_url = "/static/temp/pair_closest_writer_reference.png"
 
     return jsonify({
         "distance": round(float(min_dist), 4),
@@ -362,6 +375,7 @@ def verify_pair_signature():
         "reference_image_url": f"/static/temp/{ref_preview_name}",
         "closest_writer": closest_writer,
         "claimed_writer_id": writer_id,
+        "closest_writer_image_url": closest_writer_preview_url
     })
 
 

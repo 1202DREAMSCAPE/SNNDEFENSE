@@ -1,0 +1,13 @@
+enhanced,writer_260,genuine_2.png,0.0726,0.8270,writer_261,false_acceptance
+enhanced,writer_261,genuine_1.png,0.0000,0.8270,writer_261,true_accept
+enhanced,writer_261,genuine_2.png,0.0000,0.8270,writer_261,true_accept
+enhanced,writer_260,genuine_3.png,0.0544,0.8270,writer_261,false_acceptance
+enhanced,writer_261,forged_2.png,1.3990,0.8270,writer_278,true_reject
+enhanced,writer_261,forged_5.png,1.1848,0.8270,writer_278,true_reject
+enhanced,writer_261,forged_4.png,1.2707,0.8270,writer_278,true_reject
+enhanced,writer_260,forged_3.png,1.2753,0.8270,writer_278,true_reject
+enhanced,writer_260,forged_2.png,1.0972,0.8270,writer_278,true_reject
+enhanced,writer_260,genuine_2.png,0.0000,0.8270,writer_260,true_accept
+enhanced,writer_260,genuine_1.png,0.0000,0.8270,writer_260,true_accept
+enhanced,writer_260,genuine_3.png,0.0000,0.8270,writer_260,true_accept
+enhanced,writer_260,genuine_2.png,0.0832,0.8270,writer_262,false_acceptance
