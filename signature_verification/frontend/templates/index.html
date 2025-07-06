@@ -147,53 +147,70 @@
         <table class="w-full text-sm border border-gray-400 text-center">
           <thead class="bg-gray-100 font-semibold">
             <tr>
-              <th class="border p-2">Model Variant</th>
+              <th class="border p-2"> </th>
               <th class="border p-2">Accuracy</th>
               <th class="border p-2">FAR</th>
               <th class="border p-2">FRR</th>
               <th class="border p-2">F1-SCORE</th>
-              <th class="border p-2">Remarks</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td class="border p-2 font-medium text-left">Baseline Siamese Neural Network</td>
-              <td class="border p-2">51.63%</td>
-              <td class="border p-2">6.66%</td>
-              <td class="border p-2">90.07%</td>
-              <td class="border p-2">17.03%</td>
-              <td class="border p-2">Initial baseline without enhancements</td>
-            </tr>
-            <tr>
-              <td class="border p-2 text-left">SNN + CLAHE</td>
+              <td class="border p-2 font-medium text-left">CLAHE Preprocessing</td>
               <td class="border p-2">59.93%</td>
               <td class="border p-2">72.91%</td>
               <td class="border p-2">7.23%</td>
               <td class="border p-2">69.83%</td>
-              <td class="border p-2">Improved visibility from preprocessing</td>
             </tr>
             <tr>
-              <td class="border p-2 text-left">SNN + Triplet Loss</td>
+              <td class="border p-2 text-left">Siamese Network with Triplet Loss</td>
               <td class="border p-2">75.96%</td>
               <td class="border p-2">24.96%</td>
               <td class="border p-2">23.12%</td>
               <td class="border p-2">76.18%</td>
-              <td class="border p-2">Better distance learning</td>
             </tr>
             <tr>
-              <td class="border p-2 text-left">SNN + Threshold</td>
+              <td class="border p-2 text-left">F1 Thresholding</td>
               <td class="border p-2">74.40%</td>
               <td class="border p-2">46.24%</td>
               <td class="border p-2">4.96%</td>
               <td class="border p-2">78.78%</td>
-              <td class="border p-2">F1-optimal thresholding boosts decisions</td>
+            </tr>
+            <tr class="bg-gray-100 text-xs font-semibold">
+              <td class="border p-2 text-center">TOTAL AVERAGE</td>
+              <td class="border p-2">70.10%</td>
+              <td class="border p-2">48.04%</td>
+              <td class="border p-2">11.77%</td>
+              <td class="border p-2">74.93%</td>
+            </tr>
+            <tr>
+              <td class="border p-2 text-left">Siamese Neural Network</td>
+              <td class="border p-2">51.63%</td>
+              <td class="border p-2">6.66%</td>
+              <td class="border p-2">90.07%</td>
+              <td class="border p-2">17.03%</td>
+            </tr>
+            <tr class="">
+              <td class="border p-2 text-left">Enhanced Siamese Neural Network</td>
+              <td class="border p-2">76.10%</td>
+              <td class="border p-2">38.58%</td>
+              <td class="border p-2">9.22%</td>
+              <td class="border p-2">79.16%</td>
+            </tr>
+            <tr class="bg-gray-100 text-xs font-semibold">
+              <td class="border p-2 text-center">TOTAL INCREASE / DECREASE</td>
+              <td class="border p-2">+24.47%</td>
+              <td class="border p-2">+31.92%</td>
+              <td class="border p-2">–80.85%</td>
+              <td class="border p-2">+62.13%</td>
             </tr>
           </tbody>
         </table>
-        <p class="mt-4 text-xs text-gray-600 italic">These results are derived from training.</p>
+       <!-- <p class="mt-4 text-xs text-gray-600 italic">These results are derived from training.</p> -->
       </div>
     </div>
     
+  
   </div>
 
   <script>
