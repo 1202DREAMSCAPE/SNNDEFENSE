@@ -219,6 +219,13 @@ def verify_enhanced():
 
     return jsonify(result)
 
+# Fix macOS path to Windows path
+def fix_path(path):
+    return path.replace(
+        "/Users/christelle/Desktop/SNNDEFENSE",
+        "C:/Users/Marie/SNN/SNNDEFENSE-1"
+    )
+
 @app.route("/get_triplet_example", methods=["POST"])
 def get_triplet_example():
     try:
@@ -274,26 +281,33 @@ def get_triplet_example():
                 closest_writer_img_path = ref["path"]
                 break
 
-        # Save preview images
+        # Save preview images 
         def save_preview_image(src, dest_name):
-            img = cv2.imread(src, cv2.IMREAD_GRAYSCALE)
+            img = cv2.imread(fix_path(src), cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                print(f"[ERROR] Failed to load image at: {src}")
+                return None
             dest = os.path.join(STATIC_TEMP, dest_name)
             cv2.imwrite(dest, img)
             return f"/static/temp/{dest_name}"
 
+        # Save anchor image
         anchor_dest = os.path.join(STATIC_TEMP, "triplet_anchor.png")
         cv2.imwrite(anchor_dest, (anchor_img.squeeze() * 255).astype(np.uint8))
         anchor_url = "/static/temp/triplet_anchor.png"
+
+        # Save positive and negative preview images
         positive_url = save_preview_image(pos_path, "triplet_positive.png")
         negative_url = save_preview_image(neg_path, "triplet_negative.png")
 
         # Save closest writer image (if different)
         closest_writer_url = None
         if closest_writer_img_path:
-            closest_img = cv2.imread(closest_writer_img_path, cv2.IMREAD_GRAYSCALE)
-            preview_path = os.path.join(STATIC_TEMP, "triplet_closest_writer.png")
-            cv2.imwrite(preview_path, closest_img)
-            closest_writer_url = "/static/temp/triplet_closest_writer.png"
+            closest_img = cv2.imread(fix_path(closest_writer_img_path), cv2.IMREAD_GRAYSCALE)
+            if closest_img is not None:
+                preview_path = os.path.join(STATIC_TEMP, "triplet_closest_writer.png")
+                cv2.imwrite(preview_path, closest_img)
+                closest_writer_url = "/static/temp/triplet_closest_writer.png"
 
         return jsonify({
             "anchor_url": anchor_url,
@@ -308,9 +322,17 @@ def get_triplet_example():
 
     except Exception as e:
         print("[ERROR] Triplet generation failed:", e)
-        import traceback; traceback.print_exc()
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+
+# Fix macOS path to Windows path
+def fix_path(path):
+    return path.replace(
+        "/Users/christelle/Desktop/SNNDEFENSE",
+        "C:/Users/Marie/SNN/SNNDEFENSE-1"
+    )
 
 @app.route("/verify_pair", methods=["POST"])
 def verify_pair_signature():
@@ -356,7 +378,10 @@ def verify_pair_signature():
             closest_ref = ref["path"]
 
     # Save claimed reference image
-    ref_img = cv2.imread(closest_ref, cv2.IMREAD_GRAYSCALE)
+    ref_img = cv2.imread(fix_path(closest_ref), cv2.IMREAD_GRAYSCALE)
+    if ref_img is None:
+        return jsonify({"error": f"Failed to load reference image at {closest_ref}"}), 500
+
     ref_preview_name = f"pair_reference_{os.path.basename(closest_ref)}"
     preview_ref_path = os.path.join(STATIC_TEMP, ref_preview_name)
     cv2.imwrite(preview_ref_path, ref_img)
@@ -364,10 +389,11 @@ def verify_pair_signature():
     # Save closest writer preview image (if mismatched)
     closest_writer_preview_url = None
     if closest_writer != writer_id and closest_writer_path:
-        closest_img = cv2.imread(closest_writer_path, cv2.IMREAD_GRAYSCALE)
-        preview_path = os.path.join(STATIC_TEMP, "pair_closest_writer_reference.png")
-        cv2.imwrite(preview_path, closest_img)
-        closest_writer_preview_url = "/static/temp/pair_closest_writer_reference.png"
+        closest_img = cv2.imread(fix_path(closest_writer_path), cv2.IMREAD_GRAYSCALE)
+        if closest_img is not None:
+            preview_path = os.path.join(STATIC_TEMP, "pair_closest_writer_reference.png")
+            cv2.imwrite(preview_path, closest_img)
+            closest_writer_preview_url = "/static/temp/pair_closest_writer_reference.png"
 
     return jsonify({
         "distance": round(float(min_dist), 4),
