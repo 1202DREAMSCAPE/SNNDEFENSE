@@ -117,14 +117,14 @@
           <p id="raw-label" class="hidden mt-2 text-sm text-gray-500">Raw Uploaded Image</p>
         </div>
         <div>
-          <img id="clahe-preview" class="hidden w-full rounded border border-gray-300" alt="MinMax Normalized"/>
+          <img id="clahe-preview" class="hidden w-full rounded border border-gray-300" alt=" "/>
           <p id="minmax-label" class="hidden mt-2 text-sm text-gray-500">MinMax Normalized Image</p>
           <p id="clahe-cnr" class="hidden mt-1 text-xs text-gray-600">
             <span class="text-gray-400">(higher = better contrast vs noise)</span>
           </p>
         </div>
         <div>
-          <img id="minmax-preview" class="hidden w-full rounded border border-gray-300" alt="CLAHE Enhanced"/>
+          <img id="minmax-preview" class="hidden w-full rounded border border-gray-300" alt=" "/>
           <p id="clahe-label" class="hidden mt-2 text-sm text-gray-500">CLAHE Enhanced Image</p>
           <p id="minmax-cnr" class="hidden mt-1 text-xs text-gray-600">
             <span class="text-gray-400">(higher = better contrast vs noise)</span>
@@ -496,7 +496,7 @@
             }
           }
         }          
-
+      
     document.getElementById("base-form").addEventListener("submit", async e => {
       e.preventDefault();
       toggleLoading(true, "base");
