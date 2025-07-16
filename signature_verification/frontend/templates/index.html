@@ -289,7 +289,7 @@
           rejectionLine = `
             🔴 <strong>False Acceptance (SOP 3 Failure):</strong> 
             The signature was <strong>incorrectly accepted</strong> even though it does not belong to <strong>${data.claimed_writer_id}</strong>.<br>
-            Based on the rule <code>distance ≤ best_threshold</code>, the system classified this as genuine due to a low distance.<br>
+            Based on the rule distance ≤ threshold, the system classified this as genuine due to a low distance.<br>
             This reflects a thresholding failure — the distance was misleadingly low for a forgery.
           `;
           break;
@@ -298,7 +298,7 @@
           rejectionLine = `
             🟠 <strong>False Rejection (SOP 3 Failure):</strong> 
             A genuine signature from <strong>${data.claimed_writer_id}</strong> was <strong>incorrectly rejected</strong>.<br>
-            According to <code>distance ≤ best_threshold</code>, the system classified this as a forgery due to a high distance.<br>
+            According to distance ≤ threshold, the system classified this as a forgery due to a high distance.<br>
             This suggests the threshold was too strict for this writer’s variation.
           `;
           break;
@@ -307,7 +307,7 @@
           rejectionLine = `
             🟢 <strong>True Acceptance (SOP 3 Success):</strong> 
             The system <strong>correctly verified</strong> the genuine signature as belonging to <strong>${data.claimed_writer_id}</strong>.<br>
-            The distance fell within the threshold: <code>distance ≤ best_threshold</code>.
+            The distance fell within the threshold: distance ≤ threshold.
           `;
           break;
 
@@ -315,7 +315,7 @@
           rejectionLine = `
             🟢 <strong>True Rejection (SOP 3 Success):</strong> 
             The system <strong>correctly rejected</strong> the signature as a forgery.<br>
-            The distance exceeded the threshold, satisfying the rule: <code>distance > best_threshold</code>.
+            The distance exceeded the threshold, satisfying the rule: distance  ≤ threshold.
           `;
           break;
       }

@@ -206,16 +206,16 @@ datasets = {
         "train_writers": list(range(260, 300)),
         "test_writers": list(range(300, 315))
     },
-     "BHSig260_Bengali": {
-         "path": "Dataset/BHSig260_Bengali",
-         "train_writers": list(range(1, 71)),
-         "test_writers": list(range(71, 101))
-     },
-     "BHSig260_Hindi": {
-         "path": "Dataset/BHSig260_Hindi",
-         "train_writers": list(range(101, 191)),
-         "test_writers": list(range(191, 260))
-     }
+    #  "BHSig260_Bengali": {
+    #      "path": "Dataset/BHSig260_Bengali",
+    #      "train_writers": list(range(1, 71)),
+    #      "test_writers": list(range(71, 101))
+    #  },
+    #  "BHSig260_Hindi": {
+    #      "path": "Dataset/BHSig260_Hindi",
+    #      "train_writers": list(range(101, 191)),
+    #      "test_writers": list(range(191, 260))
+    #  }
 }
 
 os.makedirs("outputs/f1threshold", exist_ok=True)

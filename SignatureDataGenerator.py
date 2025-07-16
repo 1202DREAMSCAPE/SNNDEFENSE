@@ -22,6 +22,7 @@ class SignatureDataGenerator:
         self.batch_sz = batch_sz
         self.train_writers = []
         self.test_writers = []
+        self.cnr_values = [] 
         self._load_writers()
         
 
@@ -67,41 +68,18 @@ class SignatureDataGenerator:
             # Expand dims for channel (grayscale 1-channel image)
             img_scaled = np.expand_dims(img_scaled, axis=-1)
 
+            # --- CNR calculation for MinMax normalized images ---
+            cnr_result = self.compute_cnr(img_scaled, img_name=os.path.basename(img_path))
+            if cnr_result:
+                self.cnr_values.append(cnr_result)
+
             return img_scaled.astype(np.float32)
 
         except Exception as e:
             print(f"⚠ Error processing image {img_path}: {e}")
             return np.zeros((self.img_height, self.img_width, 1), dtype=np.float32)
-    
-    def preprocess_image_clahe(self, img_path):
-        if not isinstance(img_path, str) or not os.path.exists(img_path):
-            print(f"⚠ Warning: Missing image file: {img_path if isinstance(img_path, str) else 'Invalid Path Type'}")
-            return np.zeros((self.img_height, self.img_width, 1), dtype=np.float32)
 
-        try:
-            img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
-            if img is None:
-                print(f"⚠ Warning: Unable to read image {img_path}")
-                return np.zeros((self.img_height, self.img_width, 1), dtype=np.float32)
 
-            # Resize to expected dimensions
-            img = cv2.resize(img, (self.img_width, self.img_height))
-
-            # Apply CLAHE
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            img_clahe = clahe.apply(img)
-
-            # Normalize to [0, 1] after CLAHE (optional but often beneficial)
-            img_clahe = img_clahe.astype(np.float32) / 255.0
-
-            # Expand dims for grayscale channel
-            img_clahe = np.expand_dims(img_clahe, axis=-1)
-
-            return img_clahe
-
-        except Exception as e:
-            print(f"⚠ Error processing image {img_path}: {e}")
-            return np.zeros((self.img_height, self.img_width, 1), dtype=np.float32)
             
     def get_all_data_with_labels(self):
         """
@@ -444,5 +422,84 @@ class SignatureDataGenerator:
         return (self.get_triplet_data(self.train_writers, use_clahe=use_clahe, log_csv_path=log_csv_path)
                     .repeat()
                     .prefetch(tf.data.experimental.AUTOTUNE))
+
+    def compute_cnr(self, image: np.ndarray, img_name=None, debug=False) -> dict:
+        if image.max() > 1.0:
+            image = image / 255.0
+
+        if image.ndim > 2:
+            image = image.squeeze()
+
+        thresh_val = np.percentile(image, 30)
+        signal_mask = image <= thresh_val
+        background_mask = ~signal_mask
+
+        if np.sum(signal_mask) < 50:
+            signal_mask = image <= 0.75
+            background_mask = image > 0.75
+
+        signal_pixels = image[signal_mask]
+        background_pixels = image[background_mask]
+
+        if len(signal_pixels) == 0 or len(background_pixels) == 0:
+            return None
+
+        sigma_background = np.std(background_pixels)
+        if sigma_background < 1e-5 or np.isnan(sigma_background):
+            return None
+
+        mu_signal = np.mean(signal_pixels)
+        mu_background = np.mean(background_pixels)
+        cnr = abs(mu_signal - mu_background) / sigma_background
+
+        return {
+            'image_name': img_name,
+            'mu_signal': round(mu_signal, 4),
+            'mu_background': round(mu_background, 4),
+            'sigma_background': round(sigma_background, 4),
+            'cnr': round(cnr, 4)
+        }
+
+    def export_cnr_to_csv(self, output_path):
+        if not self.cnr_values:
+            print("No CNR values to export.")
+            return
+        import pandas as pd
+        df = pd.DataFrame(self.cnr_values)
+        df.to_csv(output_path, index=False)
+        print(f"CNR details exported to {output_path}")
+    
+    def report_cnr_statistics(self):
+        if not self.cnr_values:
+            print("No CNR values computed yet.")
+            return None
+
+        cnr_values_only = [entry['cnr'] for entry in self.cnr_values]
+        mean_cnr = np.mean(cnr_values_only)
+        std_cnr = np.std(cnr_values_only)
+        print(f"📈 CNR Statistics — Mean: {mean_cnr:.4f}, StdDev: {std_cnr:.4f}")
+        return {'average': round(mean_cnr, 4), 'std_dev': round(std_cnr, 4)}
+
+    def preprocess_image_clahe(self, img_path):
+        if not isinstance(img_path, str) or not os.path.exists(img_path):
+            return np.zeros((self.img_height, self.img_width, 1), dtype=np.float32)
+
+        img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            return np.zeros((self.img_height, self.img_width, 1), dtype=np.float32)
+
+        img = cv2.resize(img, (self.img_width, self.img_height))
+
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        img_clahe = clahe.apply(img)
+
+        img_clahe = img_clahe.astype(np.float32) / 255.0
+        img_clahe = np.expand_dims(img_clahe, axis=-1)
+
+        cnr_result = self.compute_cnr(img_clahe, img_name=os.path.basename(img_path))
+        if cnr_result:
+            self.cnr_values.append(cnr_result)
+
+        return img_clahe
 
         

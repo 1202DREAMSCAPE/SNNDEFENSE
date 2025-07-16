@@ -97,138 +97,39 @@ def build_siamese_network(input_shape):
     return model
     
 def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, output_dir="outputs/base"):
-    """
-    Evaluate binary classification metrics from softmax probability outputs using Youden's J threshold.
-    Also saves FAR/FRR vs threshold plot and logs metrics.
-    """
-    # --- Youden's J threshold selection from ROC curve ---
     if len(np.unique(y_true)) == 2:
-        scores = y_pred_probs[:, 1]  # Probability of class '1' (forged)
+        scores = y_pred_probs[:, 1]
         fpr, tpr, thresholds = roc_curve(y_true, scores)
 
         j_scores = tpr - fpr
         j_best_idx = np.argmax(j_scores)
         youden_threshold = thresholds[j_best_idx]
 
-        # Plot Youden's J statistic across thresholds
-        plt.figure(figsize=(8, 5))
-        plt.plot(thresholds, j_scores, label="Youden’s J (TPR - FPR)", color="purple")
-        plt.axvline(x=youden_threshold, color="green", linestyle="--", label=f"Best J = {j_scores[j_best_idx]:.4f} at {youden_threshold:.4f}")
-        plt.title("Youden’s J Statistic vs Threshold")
-        plt.xlabel("Threshold")
-        plt.ylabel("Youden’s J (TPR - FPR)")
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-
-        # Save the plot
-        plot_dir = os.path.join(output_dir, "plots")
-        os.makedirs(plot_dir, exist_ok=True)
-        plot_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_youden_j_curve.png")
-        plt.savefig(plot_path)
-        plt.close()
-
-        print(f"📈 Youden’s J curve saved to {plot_path}")
-
-                # Compute FAR and FRR at Youden threshold
-        y_pred_youden = (scores >= youden_threshold).astype(int)
-        cm = confusion_matrix(y_true, y_pred_youden, labels=[0, 1])
-
-        if cm.shape == (2, 2):
-            tn, fp, fn, tp = cm.ravel()
-            far_youden = fp / (fp + tn + 1e-6)
-            frr_youden = fn / (fn + tp + 1e-6)
-        else:
-            far_youden = frr_youden = 0.0
-            print("⚠ Confusion matrix incomplete at Youden threshold.")
-
-        # Bar plot of FAR and FRR
-        plt.figure(figsize=(5, 5))
-        bars = plt.bar(['FAR', 'FRR'], [far_youden, frr_youden], color=['red', 'blue'])
-        plt.ylim(0, 1)
-        for bar in bars:
-            yval = bar.get_height()
-            plt.text(bar.get_x() + bar.get_width()/2, yval + 0.02, f"{yval:.4f}", ha='center', va='bottom')
-
-        plt.title(f"FAR and FRR at Youden’s J Threshold ({youden_threshold:.4f})")
-        plt.ylabel("Error Rate")
-        plt.tight_layout()
-
-        # Save bar chart
-        bar_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_youden_farfrr_bar.png")
-        plt.savefig(bar_path)
-        plt.close()
-        print(f"📊 FAR/FRR bar chart saved to {bar_path}")
-
-        # Use Youden's threshold for binary classification
         y_pred = (scores >= youden_threshold).astype(int)
         auc = roc_auc_score(y_true, scores)
-        fnr = 1 - tpr
-
     else:
         auc = youden_threshold = None
         y_pred = np.zeros_like(y_true)
         print("⚠ ROC AUC, Youden threshold not computed (only one class in y_true)")
 
-    # Basic metrics
     acc = accuracy_score(y_true, y_pred)
     f1 = f1_score(y_true, y_pred, zero_division=0)
 
-    # Confusion matrix and derived metrics
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
     if cm.shape == (2, 2):
         tn, fp, fn, tp = cm.ravel()
         far = fp / (fp + tn + 1e-6)
         frr = fn / (fn + tp + 1e-6)
+
+        far_percent = far * 100
+        frr_percent = frr * 100
+
+        print(f"Confusion Matrix: TP={tp}, FP={fp}, TN={tn}, FN={fn}")
+        print(f"FAR (manual %): {far_percent:.2f}%")
+        print(f"FRR (manual %): {frr_percent:.2f}%")
     else:
-        tn = fp = fn = tp = far = frr = 0.0
-        print("⚠ Confusion matrix incomplete (only one class present)")
-
-    # Print to console
-    print("Evaluation Metrics:")
-    print(f"Accuracy:  {acc:.4f}")
-    print(f"F1 Score:  {f1:.4f}")
-    print(f"ROC AUC:   {auc:.4f}" if auc is not None else "❌ ROC AUC:   Not available")
-    print(f"FAR:       {far:.4f}")
-    print(f"FRR:       {frr:.4f}")
-    print(f"Youden J Threshold: {youden_threshold:.4f}" if youden_threshold is not None else "❌ Youden J: Not available")
-
-    # FAR/FRR Curve Visualization
-    if len(np.unique(y_true)) == 2:
-        plt.figure(figsize=(8, 5))
-        plt.plot(thresholds, fpr, label='FAR (False Acceptance Rate)', color='red')
-        plt.plot(thresholds, 1 - tpr, label='FRR (False Rejection Rate)', color='blue')
-        plt.axvline(x=youden_threshold, color='green', linestyle='--', label=f'Youden J = {youden_threshold:.4f}')
-        plt.title('FAR and FRR vs Threshold')
-        plt.xlabel('Threshold')
-        plt.ylabel('Error Rate')
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-
-        # Save the plot
-        plot_dir = os.path.join(output_dir, "plots")
-        os.makedirs(plot_dir, exist_ok=True)
-        plot_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_far_frr_youden.png")
-        plt.savefig(plot_path)
-        plt.close()
-        print(f"📉 FAR/FRR curve saved to {plot_path}")
-
-    # Save to file if dataset name is provided
-    if dataset_name:
-        os.makedirs(output_dir, exist_ok=True)
-        filepath = os.path.join(output_dir, f"{dataset_name}_run{run_id}_metrics.txt")
-        with open(filepath, "w") as f:
-            f.write(f"Evaluation Metrics for {dataset_name}\n")
-            f.write("="*40 + "\n")
-            f.write(f"Accuracy       : {acc:.4f}\n")
-            f.write(f"F1 Score       : {f1:.4f}\n")
-            f.write(f"ROC AUC        : {auc:.4f}\n" if auc is not None else "ROC AUC        : Not available\n")
-            f.write(f"FAR (FP Rate)  : {far:.4f}\n")
-            f.write(f"FRR (FN Rate)  : {frr:.4f}\n")
-            if youden_threshold is not None:
-                f.write(f"Youden J        : {youden_threshold:.4f}\n")
-        print(f"📝 Metrics saved to {filepath}")
+        tn = fp = fn = tp = far = frr = far_percent = frr_percent = 0.0
+        print("⚠ Confusion matrix incomplete")
 
     return {
         "accuracy": acc,
@@ -236,7 +137,13 @@ def evaluate_classification_metrics(y_true, y_pred_probs, dataset_name=None, out
         "roc_auc": auc,
         "far": far,
         "frr": frr,
-        "youden_threshold": youden_threshold
+        "youden_threshold": youden_threshold,
+        "tp": tp,
+        "fp": fp,
+        "tn": tn,
+        "fn": fn,
+        "far_percent": round(far_percent, 2),
+        "frr_percent": round(frr_percent, 2)
     }
 
 def plot_image_comparison(original, normalized, filename, dataset_name):
@@ -355,52 +262,53 @@ datasets = {
         "path": "Dataset/CEDAR",
         "train_writers": list(range(260, 300)),
         "test_writers": list(range(300, 315))
-    },
-    #  "BHSig260_Bengali": {
-    #      "path": "Dataset/BHSig260_Bengali",
-    #      "train_writers": list(range(1, 71)),
-    #      "test_writers": list(range(71, 101))
-    #  },
-    #  "BHSig260_Hindi": {
-    #      "path": "Dataset/BHSig260_Hindi",
-    #      "train_writers": list(range(101, 191)),
-    #      "test_writers": list(range(191, 260))
-    #  }
+    }
 }
 
 os.makedirs("outputs/base", exist_ok=True)
-# Define the path for the results CSV file
 results_csv_path = "outputs/base/results.csv"
-
-# Ensure the CSV file has a header if it doesn't exist
 if not os.path.exists(results_csv_path):
     with open(results_csv_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["Dataset", "Accuracy", "F1 Score", "ROC AUC", "FAR", "FRR", "Youden Threshold"])
+        writer.writerow([
+            "Dataset", "Accuracy", "F1 Score", "ROC AUC",
+            "FAR", "FAR (%)", "FRR", "FRR (%)",
+            "Youden Threshold", "TP", "FP", "TN", "FN",
+            "CNR Mean", "CNR StdDev"
+        ])
 
 results = []
 
 for dataset_name, config in datasets.items():
     print(f"\n📦 Processing Siamese Model for Dataset: {dataset_name}")
 
-    # Load and generate all training pairs
     generator = SignatureDataGenerator(
         dataset={dataset_name: config},
         img_height=IMG_SHAPE[0],
         img_width=IMG_SHAPE[1],
         batch_sz=BATCH_SIZE,
     )
+
     pairs, labels, meta = generator.generate_pairs(
         use_raw=False,
         return_metadata=True,
-        log_csv_path=f"outputs/logs/{dataset_name}_run{run_id}_pairs.csv")
-    labels = np.array(labels).astype(np.int32)
+        log_csv_path=f"outputs/logs/{dataset_name}_run{run_id}_pairs.csv"
+    )
 
-    # Separate image pairs
+    # --- Report and export CNR Statistics ---
+    cnr_stats = generator.report_cnr_statistics()
+    if cnr_stats:
+        print(f"📈 CNR Statistics for {dataset_name}: {cnr_stats}")
+    else:
+        cnr_stats = {'average': None, 'std_dev': None}
+
+    cnr_output_path = f"outputs/base/{dataset_name}_run{run_id}_cnr_values.csv"
+    generator.export_cnr_to_csv(cnr_output_path)
+
+    labels = np.array(labels).astype(np.int32)
     img1 = np.array([pair[0] for pair in pairs])
     img2 = np.array([pair[1] for pair in pairs])
 
-    # Build model using softmax-based classification
     model = build_siamese_network(IMG_SHAPE)
     model.compile(
         optimizer=Adam(learning_rate=0.0001),
@@ -408,7 +316,6 @@ for dataset_name, config in datasets.items():
         metrics=[SparseCategoricalAccuracy()]
     )
 
-    # ========== Training ==========
     start_time = time.time()
     history = model.fit(
         [img1, img2], labels,
@@ -417,27 +324,17 @@ for dataset_name, config in datasets.items():
         verbose=2
     )
 
-    # ========== Save the model ==========
     model_dir = "models"
     os.makedirs(model_dir, exist_ok=True)
-
-    # Dynamically determine the run_id based on existing files
-    existing_files = [f for f in os.listdir(model_dir) if f.startswith(f"{dataset_name}_run") and f.endswith("_siamese_model.keras")]
     model_save_path = f"{model_dir}/{dataset_name}_run{run_id}_siamese_model.keras"
     model.save(model_save_path)
     print(f"💾 Model saved to: {model_save_path}")
-    train_time = time.time() - start_time
-    print(f"⏱ Training completed in {train_time:.2f} seconds")
+    print(f"⏱ Training completed in {time.time() - start_time:.2f} seconds")
 
-    # ========== SOP 1 ==========
     print(f"\n📊 Pre-processing metrics (MinMax) for {dataset_name}")
-    generate_sop1_outputs(
-        generator
-    )
+    generate_sop1_outputs(generator)
 
-    # ========== Distance Distribution and FAR/FRR ==========
     print(f"\n🔍 Running real world metrics for {dataset_name}")
-
     test_pairs, test_labels = generator.generate_pairs(split='test', use_raw=True)
     test_img1 = np.array([pair[0] for pair in test_pairs])
     test_img2 = np.array([pair[1] for pair in test_pairs])
@@ -446,23 +343,39 @@ for dataset_name, config in datasets.items():
     print("Label Distribution:", dict(zip(*np.unique(test_labels, return_counts=True))))
     if len(np.unique(test_labels)) < 2:
         print("⚠ Skipping evaluation — only one class present.")
+        metrics = {
+            'accuracy': None, 'f1_score': None, 'roc_auc': None, 
+            'far': None, 'far_percent': None, 'frr': None, 'frr_percent': None,
+            'youden_threshold': None, 'tp': None, 'fp': None, 'tn': None, 'fn': None
+        }
     else:
         y_pred_probs = model.predict([test_img1, test_img2], batch_size=128)
         metrics = evaluate_classification_metrics(test_labels, y_pred_probs, dataset_name=dataset_name)
         compute_distance_distributions(model, generator, dataset_name)
-        results.append((dataset_name, metrics))
         print(f"✅ Evaluation Complete for {dataset_name}")
 
-        # Append results to the CSV file
-        with open(results_csv_path, "a", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                dataset_name,
-                metrics["accuracy"],
-                metrics["f1_score"],
-                metrics["roc_auc"],
-                metrics["far"],
-                metrics["frr"],
-                metrics["youden_threshold"],
-            ])
-        print(f"✅ Results saved for {dataset_name}")
+    results.append((dataset_name, metrics))
+
+    # --- Write complete metrics and CNR summary to results.csv ---
+    with open(results_csv_path, "a", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            dataset_name,
+            metrics.get("accuracy"),
+            metrics.get("f1_score"),
+            metrics.get("roc_auc"),
+            metrics.get("far"),
+            metrics.get("far_percent"),
+            metrics.get("frr"),
+            metrics.get("frr_percent"),
+            metrics.get("youden_threshold"),
+            metrics.get("tp"),
+            metrics.get("fp"),
+            metrics.get("tn"),
+            metrics.get("fn"),
+            cnr_stats.get('average'),
+            cnr_stats.get('std_dev')
+        ])
+    print(f"✅ Results summary saved for {dataset_name}")
+    print(f"📄 CNR values per image saved to: {cnr_output_path}")
+

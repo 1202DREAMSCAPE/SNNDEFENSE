@@ -285,28 +285,29 @@ def generate_sop1_outputs(generator, save_path="outputs/visualizations_clahe"):
 # Parameters
 BATCH_SIZE = 128
 EPOCHS = 5
-IMG_SHAPE = (155, 220, 1)  
+IMG_SHAPE = (155, 220, 1)
 
 datasets = {
     "CEDAR": {
-        "path": "signature_verification/Dataset/CEDAR",
+        "path": "Dataset/CEDAR",
         "train_writers": list(range(260, 300)),
         "test_writers": list(range(300, 315))
     },
 }
+
 os.makedirs("outputs/visualizations_clahe", exist_ok=True)
-# Define the path for the results CSV file
 results_csv_path = "outputs/visualizations_clahe/CLAHE_results.csv"
 
-NUM_RUNS = 5  # Number of times to repeat the experiment
+NUM_RUNS = 5
 if not os.path.exists(results_csv_path):
     with open(results_csv_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["Run", "Dataset", "Accuracy", "F1 Score", "ROC AUC", "FAR", "FRR", "Youden Threshold"])
+        writer.writerow(["Run", "Dataset", "Accuracy", "F1 Score", "ROC AUC",
+                         "FAR", "FRR", "Youden Threshold", "CNR Mean", "CNR StdDev"])
 
 for run in range(1, NUM_RUNS + 1):
     print(f"\n================ RUN {run} =================\n")
-    run_id = run  # overwrite the run_id used in evaluate_classification_metrics
+    run_id = run
 
     np.random.seed(1337 + run)
     random.seed(1337 + run)
@@ -322,12 +323,24 @@ for run in range(1, NUM_RUNS + 1):
             batch_sz=BATCH_SIZE,
         )
 
+        # --- Generate training pairs ---
         pairs, labels, meta = generator.generate_pairs(
-            use_raw=False,
+            use_clahe=True,
             return_metadata=True,
             log_csv_path=None
-            )
+        )
         labels = np.array(labels).astype(np.int32)
+
+        # --- CNR Summary After Generating Pairs ---
+        cnr_stats = generator.report_cnr_statistics()
+        if cnr_stats:
+            print(f"📈 CNR Statistics for {dataset_name}: {cnr_stats}")
+        else:
+            cnr_stats = {'average': None, 'std_dev': None}
+
+        cnr_output_path = f"outputs/visualizations_clahe/{dataset_name}_run{run_id}_cnr_values.csv"
+        generator.export_cnr_to_csv(cnr_output_path)
+        print(f"📄 CNR values saved to: {cnr_output_path}")
 
         img1 = np.array([pair[0] for pair in pairs])
         img2 = np.array([pair[1] for pair in pairs])
@@ -349,11 +362,6 @@ for run in range(1, NUM_RUNS + 1):
         )
         print(f"⏱ Training completed in {time.time() - start_time:.2f} seconds")
 
-        # SOP 1: Visualizations
-        print(f"\n📊 SOP1 (CLAHE visualizations) for {dataset_name}")
-        generate_sop1_outputs(generator)
-
-        # SOP 2-3: Classification Evaluation
         print(f"\n🔍 Evaluation (SOP2/SOP3) for {dataset_name}")
         test_pairs, test_labels = generator.generate_pairs(split='test', use_raw=True)
         test_img1 = np.array([pair[0] for pair in test_pairs])
@@ -368,7 +376,6 @@ for run in range(1, NUM_RUNS + 1):
         metrics = evaluate_classification_metrics(test_labels, y_pred_probs, dataset_name=dataset_name)
         print(f"✅ Evaluation Complete for {dataset_name} (Run {run})")
 
-        # Append result to CSV
         with open(results_csv_path, "a", newline="") as f:
             writer = csv.writer(f)
             writer.writerow([
@@ -379,6 +386,8 @@ for run in range(1, NUM_RUNS + 1):
                 metrics["roc_auc"],
                 metrics["far"],
                 metrics["frr"],
-                metrics["youden_threshold"]
+                metrics["youden_threshold"],
+                cnr_stats['average'],
+                cnr_stats['std_dev']
             ])
-        print(f"📁 Results logged in CSV for {dataset_name} (Run {run})")
+        print(f"✅ Results logged in CSV for {dataset_name} (Run {run})")
