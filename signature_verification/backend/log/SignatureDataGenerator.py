@@ -384,28 +384,29 @@ class SignatureDataGenerator:
         return triplets
 
 
-    def get_triplet_data(self, writers_list,use_clahe=False, use_raw=False, log_csv_path=None):
+    def get_triplet_data(self, writers_list, use_clahe=False, use_raw=False, log_csv_path=None):
         """Generate triplet data formatted for TensorFlow's Dataset API."""
         triplets = []
-
+    
         for dataset_path, writer in writers_list:
-            if (dataset_path, writer) not in self.train_writers:
-                print(f"⚠ Skipping writer {writer} (not in train_writers)")
+            # Check against the correct list of writers
+            if (dataset_path, writer) not in self.train_writers and (dataset_path, writer) not in self.test_writers:
+                print(f"⚠ Skipping writer {writer} (not in train_writers or test_writers)")
                 continue  
-
+    
             writer_triplets = self.generate_triplets(dataset_path, writer, 
                                                      use_clahe=use_clahe, 
                                                      use_raw=use_raw,
                                                      log_csv_path=log_csv_path)
             if writer_triplets:
                 triplets.extend(writer_triplets)
-
+    
         random.shuffle(triplets)
         
         def generator():
             for anchor, positive, negative in triplets:
                 yield (anchor, positive, negative), 0.0  # dummy label
-
+    
         output_signature = (
             (
                 tf.TensorSpec(shape=(self.img_height, self.img_width, 1), dtype=tf.float32),
@@ -414,7 +415,7 @@ class SignatureDataGenerator:
             ),
             tf.TensorSpec(shape=(), dtype=tf.float32)  # dummy label
         )
-
+    
         return tf.data.Dataset.from_generator(generator, output_signature=output_signature).batch(self.batch_sz)
 
     def get_triplet_train(self, use_clahe=False, log_csv_path=None):

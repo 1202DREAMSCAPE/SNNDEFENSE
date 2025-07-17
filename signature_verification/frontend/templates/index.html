@@ -9,10 +9,6 @@
 <body class="bg-gray-50 text-gray-800 min-h-screen p-6">
   <div class="max-w-5xl mx-auto space-y-8">
     <h1 class="text-3xl font-bold text-center text-blue-700">Signature Verification System</h1>
-    <button onclick="openSOP3Modal()" class="mt-4 px-4 py-2 bg-violet-600 text-center text-white text-sm rounded hover:bg-blue-700">
-      📊 View Model Metrics
-    </button>
-    
     <div class="flex flex-col lg:flex-row gap-6">
       <!-- Base Model Form -->
       <form id="base-form" method="POST" enctype="multipart/form-data" action="/base" class="bg-white rounded-lg shadow-md p-6 space-y-4 flex-1">
@@ -121,21 +117,22 @@
           <p id="raw-label" class="hidden mt-2 text-sm text-gray-500">Raw Uploaded Image</p>
         </div>
         <div>
-          <img id="clahe-preview" class="hidden w-full rounded border border-gray-300" alt="MinMax Normalized"/>
+          <img id="minmax-preview" class="hidden w-full rounded border border-gray-300" alt=" "/>
           <p id="minmax-label" class="hidden mt-2 text-sm text-gray-500">MinMax Normalized Image</p>
-          <p id="clahe-cnr" class="hidden mt-1 text-xs text-gray-600">
+          <p id="minmax-cnr" class="hidden mt-1 text-xs text-gray-600">
             <span class="text-gray-400">(higher = better contrast vs noise)</span>
           </p>
         </div>
         <div>
-          <img id="minmax-preview" class="hidden w-full rounded border border-gray-300" alt="CLAHE Enhanced"/>
+          <img id="clahe-preview" class="hidden w-full rounded border border-gray-300" alt=" "/>
           <p id="clahe-label" class="hidden mt-2 text-sm text-gray-500">CLAHE Enhanced Image</p>
-          <p id="minmax-cnr" class="hidden mt-1 text-xs text-gray-600">
+          <p id="clahe-cnr" class="hidden mt-1 text-xs text-gray-600">
             <span class="text-gray-400">(higher = better contrast vs noise)</span>
           </p>
         </div>
       </div>
     </div>
+<<<<<<< HEAD
 
       <!-- Metrics Modal -->
       <div id="sop3-modal" class="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center hidden z-50">
@@ -211,6 +208,10 @@
           </p>        
         </div>
       </div>
+=======
+    
+  
+>>>>>>> f8aee40a4c6a9929206eed31d4824b6d195dd408
   </div>
 
   <script>
@@ -287,7 +288,7 @@
           rejectionLine = `
             🔴 <strong>False Acceptance (SOP 3 Failure):</strong> 
             The signature was <strong>incorrectly accepted</strong> even though it does not belong to <strong>${data.claimed_writer_id}</strong>.<br>
-            Based on the rule <code>distance ≤ best_threshold</code>, the system classified this as genuine due to a low distance.<br>
+            Based on the rule distance ≤ threshold, the system classified this as genuine due to a low distance.<br>
             This reflects a thresholding failure — the distance was misleadingly low for a forgery.
           `;
           break;
@@ -296,7 +297,7 @@
           rejectionLine = `
             🟠 <strong>False Rejection (SOP 3 Failure):</strong> 
             A genuine signature from <strong>${data.claimed_writer_id}</strong> was <strong>incorrectly rejected</strong>.<br>
-            According to <code>distance ≤ best_threshold</code>, the system classified this as a forgery due to a high distance.<br>
+            According to distance ≤ threshold, the system classified this as a forgery due to a high distance.<br>
             This suggests the threshold was too strict for this writer’s variation.
           `;
           break;
@@ -305,7 +306,7 @@
           rejectionLine = `
             🟢 <strong>True Acceptance (SOP 3 Success):</strong> 
             The system <strong>correctly verified</strong> the genuine signature as belonging to <strong>${data.claimed_writer_id}</strong>.<br>
-            The distance fell within the threshold: <code>distance ≤ best_threshold</code>.
+            The distance fell within the threshold: distance ≤ threshold.
           `;
           break;
 
@@ -313,7 +314,7 @@
           rejectionLine = `
             🟢 <strong>True Rejection (SOP 3 Success):</strong> 
             The system <strong>correctly rejected</strong> the signature as a forgery.<br>
-            The distance exceeded the threshold, satisfying the rule: <code>distance > best_threshold</code>.
+            The distance exceeded the threshold, satisfying the rule: distance  ≤ threshold.
           `;
           break;
       }
@@ -323,8 +324,8 @@
         resultsList.innerHTML = `
           <li>✅ <strong>Result:</strong> ${
             data.result === "genuine"
-              ? "Accepted as Genuine"
-              : "Rejected as Forgery"
+              ? "Genuine"
+              : "Forged"
           }</li>
 
           <li>✏️ <strong>Distance:</strong> ${data.distance.toFixed(4)}</li>
@@ -416,6 +417,43 @@
     
       stats.innerHTML = content;
       openTripletModal();
+
+      const claheImg = document.getElementById("clahe-preview");
+      const claheLabel = document.getElementById("clahe-label");
+      const claheCnr = document.getElementById("clahe-cnr");
+    
+      const minmaxImg = document.getElementById("minmax-preview");
+      const minmaxLabel = document.getElementById("minmax-label");
+      const minmaxCnr = document.getElementById("minmax-cnr");
+    
+      if (data.minmax_image_url) {
+        claheImg.src = data.minmax_image_url;  // show minmax image in CLAHE preview
+        claheImg.classList.remove("hidden");
+        claheLabel.classList.remove("hidden");
+        if (data.minmax_cnr !== undefined) {
+          claheCnr.innerText = `📈 CNR: ${data.minmax_cnr}`;
+          claheCnr.classList.remove("hidden");
+        }
+      }
+    
+      if (data.clahe_image_url) {
+        minmaxImg.src = data.clahe_image_url;  // show CLAHE image in MinMax preview
+        minmaxImg.classList.remove("hidden");
+        minmaxLabel.classList.remove("hidden");
+        if (data.clahe_cnr !== undefined) {
+          minmaxCnr.innerText = `📈 CNR: ${data.clahe_cnr}`;
+          minmaxCnr.classList.remove("hidden");
+        }
+      }
+    
+      // Raw image display remains unchanged
+      if (data.raw_image_url) {
+        const rawImg = document.getElementById("raw-preview");
+        const rawLabel = document.getElementById("raw-label");
+        rawImg.src = data.raw_image_url;
+        rawImg.classList.remove("hidden");
+        rawLabel.classList.remove("hidden");
+      }
     }
         
 
@@ -573,7 +611,7 @@
             }
           }
         }          
-
+      
     document.getElementById("base-form").addEventListener("submit", async e => {
       e.preventDefault();
       toggleLoading(true, "base");

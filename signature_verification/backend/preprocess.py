@@ -38,15 +38,18 @@ def compute_cnr(image: np.ndarray, debug=False) -> float:
         return 0.0
 
     sigma_background = np.std(background_pixels)
-    if sigma_background < 1e-5 or np.isnan(sigma_background):
-        if debug: print("[DEBUG] Background standard deviation is too low or NaN.")
-        return 0.0
+    min_sigma = 0.01  # prevent division by very small values
+    if sigma_background < min_sigma or np.isnan(sigma_background):
+        if debug: print(f"[DEBUG] Background std too low: {sigma_background}, applying min_sigma={min_sigma}")
+        sigma_background = min_sigma
 
     mu_signal = np.mean(signal_pixels)
     mu_background = np.mean(background_pixels)
 
     cnr = abs(mu_signal - mu_background) / sigma_background
+    cnr = min(cnr, 100.0)  # optional: cap CNR to 100 for sanity
     return round(float(cnr), 4)
+
 
 
 def preprocess_signature(image_path, preprocessing_type="clahe"):

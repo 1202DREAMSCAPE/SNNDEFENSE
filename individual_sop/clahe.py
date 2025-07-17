@@ -30,10 +30,6 @@ from collections import defaultdict, Counter
 import sys
 run_id = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 
-np.random.seed(1337)
-random.seed(1337)
-tf.random.set_seed(1337)
-
 @register_keras_serializable()
 def create_base_network(input_shape):
     """
@@ -289,7 +285,7 @@ def generate_sop1_outputs(generator, save_path="outputs/visualizations_clahe"):
 # Parameters
 BATCH_SIZE = 128
 EPOCHS = 5
-IMG_SHAPE = (155, 220, 1)  
+IMG_SHAPE = (155, 220, 1)
 
 datasets = {
     "CEDAR": {
@@ -297,90 +293,93 @@ datasets = {
         "train_writers": list(range(260, 300)),
         "test_writers": list(range(300, 315))
     },
-     "BHSig260_Bengali": {
-         "path": "Dataset/BHSig260_Bengali",
-         "train_writers": list(range(1, 71)),
-         "test_writers": list(range(71, 101))
-     },
-     "BHSig260_Hindi": {
-         "path": "Dataset/BHSig260_Hindi",
-         "train_writers": list(range(101, 191)),
-         "test_writers": list(range(191, 260))
-     }
 }
+
 os.makedirs("outputs/visualizations_clahe", exist_ok=True)
-# Define the path for the results CSV file
 results_csv_path = "outputs/visualizations_clahe/CLAHE_results.csv"
 
-# Ensure the CSV file has a header if it doesn't exist
+NUM_RUNS = 5
 if not os.path.exists(results_csv_path):
     with open(results_csv_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["Dataset", "Accuracy", "F1 Score", "ROC AUC", "FAR", "FRR", "Youden Threshold"])
+        writer.writerow(["Run", "Dataset", "Accuracy", "F1 Score", "ROC AUC",
+                         "FAR", "FRR", "Youden Threshold", "CNR Mean", "CNR StdDev"])
 
-results = []
+for run in range(1, NUM_RUNS + 1):
+    print(f"\n================ RUN {run} =================\n")
+    run_id = run
 
-for dataset_name, config in datasets.items():
-    print(f"\n📦 Processing Siamese Model for Dataset: {dataset_name}")
-    # Load and generate training pairs (all writers in train set)
-    generator = SignatureDataGenerator(
-        dataset={dataset_name: config},
-        img_height=IMG_SHAPE[0],
-        img_width=IMG_SHAPE[1],
-        batch_sz=BATCH_SIZE,
-    )
-    train_pairs, train_labels = generator.generate_pairs(split='train')
-    train_labels = np.array(train_labels).astype(np.int32)
+    np.random.seed(1337 + run)
+    random.seed(1337 + run)
+    tf.random.set_seed(1337 + run)
 
-    # Prepare image pair arrays
-    train_img1 = np.array([pair[0] for pair in train_pairs])
-    train_img2 = np.array([pair[1] for pair in train_pairs])
+    for dataset_name, config in datasets.items():
+        print(f"\n📦 Processing Siamese Model for Dataset: {dataset_name} (Run {run})")
 
-    # Build softmax-based Siamese model
-    model = build_siamese_network(IMG_SHAPE)
-    model.compile(
-        optimizer=Adam(learning_rate=0.0001),
-        loss=SparseCategoricalCrossentropy(),
-        metrics=[SparseCategoricalAccuracy()]
-    )
+        generator = SignatureDataGenerator(
+            dataset={dataset_name: config},
+            img_height=IMG_SHAPE[0],
+            img_width=IMG_SHAPE[1],
+            batch_sz=BATCH_SIZE,
+        )
 
-    # ========== Training ==========
-    start_time = time.time()
-    history = model.fit(
-        [train_img1, train_img2], train_labels,
-        batch_size=BATCH_SIZE,
-        epochs=EPOCHS,
-        verbose=2
-    )
+        # --- Generate training pairs ---
+        pairs, labels, meta = generator.generate_pairs(
+            use_clahe=True,
+            return_metadata=True,
+            log_csv_path=None
+        )
+        labels = np.array(labels).astype(np.int32)
 
-    print(f"⏱ Training completed in {time.time() - start_time:.2f} seconds")
+        # --- CNR Summary After Generating Pairs ---
+        cnr_stats = generator.report_cnr_statistics()
+        if cnr_stats:
+            print(f"📈 CNR Statistics for {dataset_name}: {cnr_stats}")
+        else:
+            cnr_stats = {'average': None, 'std_dev': None}
 
-    # ========== SOP 1 ==========
-    print(f"\n📊 Pre-processing metrics (CLAHE) for {dataset_name}")
-    generate_sop1_outputs(
-        generator)
-    
-    # ========== Distance Distribution and FAR/FRR ==========
-    print(f"\n🔍 Running real world metrics for {dataset_name}")
+        cnr_output_path = f"outputs/visualizations_clahe/{dataset_name}_run{run_id}_cnr_values.csv"
+        generator.export_cnr_to_csv(cnr_output_path)
+        print(f"📄 CNR values saved to: {cnr_output_path}")
 
-    test_pairs, test_labels = generator.generate_pairs(split='test', use_raw=True)
-    test_img1 = np.array([pair[0] for pair in test_pairs])
-    test_img2 = np.array([pair[1] for pair in test_pairs])
-    test_labels = np.array(test_labels)
+        img1 = np.array([pair[0] for pair in pairs])
+        img2 = np.array([pair[1] for pair in pairs])
 
-    print("Label Distribution:", dict(zip(*np.unique(test_labels, return_counts=True))))
-    if len(np.unique(test_labels)) < 2:
-        print("⚠ Skipping evaluation — only one class present.")
-    else:
+        model = build_siamese_network(IMG_SHAPE)
+        model.compile(
+            optimizer=Adam(learning_rate=0.0001),
+            loss=SparseCategoricalCrossentropy(),
+            metrics=[SparseCategoricalAccuracy()]
+        )
+
+        print("🚀 Training started...")
+        start_time = time.time()
+        model.fit(
+            [img1, img2], labels,
+            batch_size=BATCH_SIZE,
+            epochs=EPOCHS,
+            verbose=2
+        )
+        print(f"⏱ Training completed in {time.time() - start_time:.2f} seconds")
+
+        print(f"\n🔍 Evaluation (SOP2/SOP3) for {dataset_name}")
+        test_pairs, test_labels = generator.generate_pairs(split='test', use_raw=True)
+        test_img1 = np.array([pair[0] for pair in test_pairs])
+        test_img2 = np.array([pair[1] for pair in test_pairs])
+        test_labels = np.array(test_labels)
+
+        if len(np.unique(test_labels)) < 2:
+            print("⚠ Skipping evaluation — only one class present.")
+            continue
+
         y_pred_probs = model.predict([test_img1, test_img2], batch_size=128)
         metrics = evaluate_classification_metrics(test_labels, y_pred_probs, dataset_name=dataset_name)
-        results.append((dataset_name, metrics))
-        print(f"✅ Evaluation Complete for {dataset_name}")
+        print(f"✅ Evaluation Complete for {dataset_name} (Run {run})")
 
-        # Append results to the CSV file
         with open(results_csv_path, "a", newline="") as f:
             writer = csv.writer(f)
             writer.writerow([
+                run,
                 dataset_name,
                 metrics["accuracy"],
                 metrics["f1_score"],
@@ -388,5 +387,7 @@ for dataset_name, config in datasets.items():
                 metrics["far"],
                 metrics["frr"],
                 metrics["youden_threshold"],
+                cnr_stats['average'],
+                cnr_stats['std_dev']
             ])
-        print(f"✅ Results saved for {dataset_name}")
+        print(f"✅ Results logged in CSV for {dataset_name} (Run {run})")

@@ -142,15 +142,17 @@ def verify_enhanced():
     minmax_img, minmax_cnr_value = preprocess_signature(raw_path, preprocessing_type="minmax")
     cv2.imwrite(minmax_path, (minmax_img.squeeze() * 255).astype(np.uint8))
 
-    # Get normalized embedding
+    # Get normalized embedding 
     raw_emb = enhanced_model.predict(np.expand_dims(clahe_img, axis=0), verbose=0)[0].flatten()
     uploaded_emb = raw_emb / (np.linalg.norm(raw_emb) + 1e-10)
 
-    # Find anchor–positive (claimed writer)
+     # Find the closest reference embedding (anchor-positive pair) for the claimed writer
     min_pos_dist, pos_path = float("inf"), None
     for ref in enhanced_reference_embeddings[claimed_writer_id]:
         ref_emb = ref["embedding"] / (np.linalg.norm(ref["embedding"]) + 1e-10)
+        # Compute the Euclidean distance between the uploaded embedding and the reference embedding
         dist = np.linalg.norm(uploaded_emb - ref_emb)
+        # Update the minimum distance and corresponding reference path if a closer match is found
         if dist < min_pos_dist:
             min_pos_dist = dist
             pos_path = ref["path"]
@@ -177,14 +179,12 @@ def verify_enhanced():
                 min_global_dist = dist
                 closest_writer = writer
 
-    # Thresholding logic (uses anchor–positive)
     threshold = 0.827
     distance = min_pos_dist
 
     # True if both distance is low AND writer is correct
     is_authentic = (closest_writer == claimed_writer_id) and (distance <= threshold)
 
-    # Now define rejection_type clearly
     if is_authentic:
         rejection_type = "true_accept"
     elif (closest_writer != claimed_writer_id) and (distance <= threshold):

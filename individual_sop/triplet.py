@@ -94,61 +94,22 @@ def build_triplet_network(input_shape):
     return model
 
 def evaluate_classification_metrics(y_true, distances, dataset_name=None, output_dir="outputs/tripletloss"):
-    """
-    Evaluate binary classification metrics from Euclidean distances using Youden's J statistic.
-    Lower distance = more similar (genuine), so thresholding is done with <=.
-    """
     if len(np.unique(y_true)) == 2:
-        fpr, tpr, thresholds = roc_curve(y_true, -distances)  # Invert for correct direction
+        fpr, tpr, thresholds = roc_curve(y_true, -distances)
 
         j_scores = tpr - fpr
         j_best_idx = np.argmax(j_scores)
-        youden_threshold = thresholds[j_best_idx] * -1  # Undo inversion
+        youden_threshold = thresholds[j_best_idx] * -1
 
-        # Plot Youden's J
-        plt.figure(figsize=(8, 5))
-        plt.plot(-thresholds, j_scores, label="Youden’s J (TPR - FPR)", color="purple")
-        plt.axvline(x=youden_threshold, color="green", linestyle="--", label=f"Best J = {j_scores[j_best_idx]:.4f} at {youden_threshold:.4f}")
-        plt.title("Youden’s J Statistic vs Distance Threshold")
-        plt.xlabel("Distance Threshold")
-        plt.ylabel("Youden’s J (TPR - FPR)")
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-
-        plot_dir = os.path.join(output_dir, "plots")
-        os.makedirs(plot_dir, exist_ok=True)
-        plot_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_youden_j_curve.png")
-        plt.savefig(plot_path)
-        plt.close()
-        print(f"📈 Youden’s J curve saved to {plot_path}")
-
-        # Classification
         y_pred = (distances <= youden_threshold).astype(int)
-
-        # Confusion matrix
         cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
+
         if cm.shape == (2, 2):
             tn, fp, fn, tp = cm.ravel()
             far = fp / (fp + tn + 1e-6)
             frr = fn / (fn + tp + 1e-6)
         else:
-            far = frr = 0.0
-            print("⚠ Confusion matrix incomplete.")
-
-        # Bar plot
-        plt.figure(figsize=(5, 5))
-        bars = plt.bar(['FAR', 'FRR'], [far, frr], color=['red', 'blue'])
-        for bar in bars:
-            yval = bar.get_height()
-            plt.text(bar.get_x() + bar.get_width()/2, yval + 0.02, f"{yval:.4f}", ha='center', va='bottom')
-        plt.ylim(0, 1)
-        plt.title(f"FAR and FRR at Youden’s Threshold ({youden_threshold:.4f})")
-        plt.tight_layout()
-        bar_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_youden_farfrr_bar.png")
-        plt.savefig(bar_path)
-        plt.close()
-        print(f"📊 FAR/FRR bar chart saved to {bar_path}")
+            tn = fp = fn = tp = far = frr = 0
 
         auc = roc_auc_score(y_true, -distances)
         acc = accuracy_score(y_true, y_pred)
@@ -161,37 +122,7 @@ def evaluate_classification_metrics(y_true, distances, dataset_name=None, output
         print(f"FAR:       {far:.4f}")
         print(f"FRR:       {frr:.4f}")
         print(f"Youden J Threshold: {youden_threshold:.4f}")
-
-        # FAR/FRR line plot
-        plt.figure(figsize=(8, 5))
-        plt.plot(-thresholds, fpr, label='FAR (False Acceptance Rate)', color='red')
-        plt.plot(-thresholds, 1 - tpr, label='FRR (False Rejection Rate)', color='blue')
-        plt.axvline(x=youden_threshold, color='green', linestyle='--', label=f'Youden J = {youden_threshold:.4f}')
-        plt.xlabel("Distance Threshold")
-        plt.ylabel("Error Rate")
-        plt.title("FAR and FRR vs Distance Threshold")
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-        far_frr_plot_path = os.path.join(plot_dir, f"{dataset_name}_run{run_id}_far_frr_youden.png")
-        plt.savefig(far_frr_plot_path)
-        plt.close()
-        print(f"📉 FAR/FRR curve saved to {far_frr_plot_path}")
-
-        # Save to txt
-        if dataset_name:
-            os.makedirs(output_dir, exist_ok=True)
-            filepath = os.path.join(output_dir, f"{dataset_name}_run{run_id}_metrics.txt")
-            with open(filepath, "w") as f:
-                f.write(f"Evaluation Metrics for {dataset_name}\n")
-                f.write("="*40 + "\n")
-                f.write(f"Accuracy       : {acc:.4f}\n")
-                f.write(f"F1 Score       : {f1:.4f}\n")
-                f.write(f"ROC AUC        : {auc:.4f}\n")
-                f.write(f"FAR (FP Rate)  : {far:.4f}\n")
-                f.write(f"FRR (FN Rate)  : {frr:.4f}\n")
-                f.write(f"Youden J        : {youden_threshold:.4f}\n")
-            print(f"📝 Metrics saved to {filepath}")
+        print(f"TP: {tp}, FP: {fp}, TN: {tn}, FN: {fn}")
 
         return {
             "accuracy": acc,
@@ -199,19 +130,15 @@ def evaluate_classification_metrics(y_true, distances, dataset_name=None, output
             "roc_auc": auc,
             "far": far,
             "frr": frr,
-            "youden_threshold": youden_threshold
+            "youden_threshold": youden_threshold,
+            "tp": tp,
+            "fp": fp,
+            "tn": tn,
+            "fn": fn
         }
-
     else:
-        print("⚠ ROC AUC and thresholding skipped — only one class present.")
-        return {
-            "accuracy": 0.0,
-            "f1_score": 0.0,
-            "roc_auc": 0.0,
-            "far": 0.0,
-            "frr": 0.0,
-            "youden_threshold": None
-        }
+        return {k: 0 for k in ["accuracy", "f1_score", "roc_auc", "far", "frr", "youden_threshold", "tp", "fp", "tn", "fn"]}
+
 
 
 def compute_distance_distributions(
@@ -283,16 +210,6 @@ datasets = {
         "path": "Dataset/CEDAR",
         "train_writers": list(range(260, 300)),
         "test_writers": list(range(300, 315))
-    },
-    "BHSig260_Bengali": {
-        "path": "Dataset/BHSig260_Bengali",
-        "train_writers": list(range(1, 71)),
-        "test_writers": list(range(71, 101))
-    },
-    "BHSig260_Hindi": {
-        "path": "Dataset/BHSig260_Hindi",
-        "train_writers": list(range(101, 191)),
-        "test_writers": list(range(191, 260))
     }
 }
 
@@ -304,7 +221,7 @@ results_csv_path = "outputs/tripletloss/results.csv"
 if not os.path.exists(results_csv_path):
     with open(results_csv_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["Dataset", "Accuracy", "F1 Score", "ROC AUC", "FAR", "FRR", "Youden Threshold"])
+        writer.writerow(["Dataset", "Accuracy", "F1 Score", "ROC AUC", "FAR", "FRR", "Youden Threshold", "TP", "FP", "TN", "FN"])
 
 results = []
 
@@ -386,6 +303,10 @@ for dataset_name, config in datasets.items():
                 metrics["roc_auc"],
                 metrics["far"],
                 metrics["frr"],
-                metrics["youden_threshold"]
+                metrics["youden_threshold"],
+                metrics["tp"],
+                metrics["fp"],
+                metrics["tn"],
+                metrics["fn"]
             ])
         print(f"✅ Results saved for {dataset_name}")
