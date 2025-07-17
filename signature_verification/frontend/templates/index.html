@@ -117,16 +117,16 @@
           <p id="raw-label" class="hidden mt-2 text-sm text-gray-500">Raw Uploaded Image</p>
         </div>
         <div>
-          <img id="minmax-preview" class="hidden w-full rounded border border-gray-300" alt=" "/>
-          <p id="minmax-label" class="hidden mt-2 text-sm text-gray-500">MinMax Normalized Image</p>
-          <p id="minmax-cnr" class="hidden mt-1 text-xs text-gray-600">
+          <img id="clahe-preview" class="hidden w-full rounded border border-gray-300" alt=" "/>
+          <p id="clahe-label" class="hidden mt-2 text-sm text-gray-500"> </p>
+          <p id="clahe-cnr" class="hidden mt-1 text-xs text-gray-600">
             <span class="text-gray-400">(higher = better contrast vs noise)</span>
           </p>
         </div>
         <div>
-          <img id="clahe-preview" class="hidden w-full rounded border border-gray-300" alt=" "/>
-          <p id="clahe-label" class="hidden mt-2 text-sm text-gray-500">CLAHE Enhanced Image</p>
-          <p id="clahe-cnr" class="hidden mt-1 text-xs text-gray-600">
+          <img id="minmax-preview" class="hidden w-full rounded border border-gray-300" alt=" "/>
+          <p id="minmax-label" class="hidden mt-2 text-sm text-gray-500"> </p>
+          <p id="minmax-cnr" class="hidden mt-1 text-xs text-gray-600">
             <span class="text-gray-400">(higher = better contrast vs noise)</span>
           </p>
         </div>
@@ -197,12 +197,12 @@
     async function handleVerificationResponse(response) {
       const data = await response.json();
       document.getElementById("results").classList.remove("hidden");
-
+    
       const claimedWriter = document.getElementById("writer_id_enhanced").value.trim();
       const closestWriter = data.closest_writer.trim();
-
+    
       const closestWriterColor = claimedWriter === closestWriter ? "green" : "red";
-
+    
       // Build rejection type line
       let rejectionLine = "";
       switch (data.rejection_type) {
@@ -214,7 +214,7 @@
             This reflects a thresholding failure — the distance was misleadingly low for a forgery.
           `;
           break;
-
+    
         case "false_rejection":
           rejectionLine = `
             🟠 <strong>False Rejection (SOP 3 Failure):</strong> 
@@ -223,7 +223,7 @@
             This suggests the threshold was too strict for this writer’s variation.
           `;
           break;
-
+    
         case "true_accept":
           rejectionLine = `
             🟢 <strong>True Acceptance (SOP 3 Success):</strong> 
@@ -231,7 +231,7 @@
             The distance fell within the threshold: distance ≤ threshold.
           `;
           break;
-
+    
         case "true_reject":
           rejectionLine = `
             🟢 <strong>True Rejection (SOP 3 Success):</strong> 
@@ -240,69 +240,71 @@
           `;
           break;
       }
-
-
+    
       const resultsList = document.getElementById("results-list");
-        resultsList.innerHTML = `
-          <li>✅ <strong>Result:</strong> ${
-            data.result === "genuine"
-              ? "Genuine"
-              : "Forged"
-          }</li>
-
-          <li>✏️ <strong>Distance:</strong> ${data.distance.toFixed(4)}</li>
-          <li>⏱️ <strong>Threshold:</strong> ${data.threshold.toFixed(4)}</li>
-
-          <li>🔁 <strong>Threshold Rule:</strong> ${
-            data.result === "genuine"
-              ? `Distance ≤ Threshold → Accepted`
-              : `Distance > Threshold → Rejected`
-          }</li>
-          <li>👤 <strong>Identity Match:</strong> ${
-            data.identity_match
-              ? "✅ Closest writer matches the selected writer"
-              : "❌ Closest writer is different from selected writer"
-          }</li>
-          <li>${rejectionLine}</li>
-        `;
-
-      const previews = {
-        raw: "raw-preview",
-        clahe: "clahe-preview",
-        minmax: "minmax-preview"
-      };
-
-      for (const type in previews) {
-        const img = document.getElementById(previews[type]);
-        const label = document.getElementById(`${type}-label`);
-        const url = data[`${type}_image_url`];
-
-        if (url) {
-          img.src = url;
-          img.classList.remove("hidden");
-          label.classList.remove("hidden");
-        } else {
-          img.classList.add("hidden");
-          label.classList.add("hidden");
-
-          const cnrEl = document.getElementById(`${type}-cnr`);
-          if (cnrEl) cnrEl.classList.add("hidden");
-        } 
+      resultsList.innerHTML = `
+        <li>✅ <strong>Result:</strong> ${
+          data.result === "genuine" ? "Genuine" : "Forged"
+        }</li>
+        <li>✏️ <strong>Distance:</strong> ${data.distance.toFixed(4)}</li>
+        <li>⏱️ <strong>Threshold:</strong> ${data.threshold.toFixed(4)}</li>
+        <li>🔁 <strong>Threshold Rule:</strong> ${
+          data.result === "genuine"
+            ? `Distance ≤ Threshold → Accepted`
+            : `Distance > Threshold → Rejected`
+        }</li>
+        <li>👤 <strong>Identity Match:</strong> ${
+          data.identity_match
+            ? "✅ Closest writer matches the selected writer"
+            : "❌ Closest writer is different from selected writer"
+        }</li>
+        <li>${rejectionLine}</li>
+      `;
+    
+      // Handle Raw Image (no swap)
+      if (data.raw_image_url) {
+        const rawImg = document.getElementById("raw-preview");
+        const rawLabel = document.getElementById("raw-label");
+        rawImg.src = data.raw_image_url;
+        rawImg.classList.remove("hidden");
+        rawLabel.classList.remove("hidden");
+      }
+    
+      // Swapped assignment: MinMax shows as CLAHE, CLAHE shows as MinMax
+      const claheImg = document.getElementById("clahe-preview");
+      const claheLabel = document.getElementById("clahe-label");
+      const claheCnr = document.getElementById("clahe-cnr");
+    
+      const minmaxImg = document.getElementById("minmax-preview");
+      const minmaxLabel = document.getElementById("minmax-label");
+      const minmaxCnr = document.getElementById("minmax-cnr");
+    
+      // 👀 Show MinMax image as CLAHE
+      if (data.minmax_image_url) {
+        claheImg.src = data.minmax_image_url;
+        claheImg.classList.remove("hidden");
+        claheLabel.classList.remove("hidden");
+        if (data.minmax_cnr !== undefined) {
+          claheCnr.innerText = `📈 CNR: ${data.minmax_cnr}`;
+          claheCnr.classList.remove("hidden");
+        }
+      }
+    
+      // 👀 Show CLAHE image as MinMax
+      if (data.clahe_image_url) {
+        minmaxImg.src = data.clahe_image_url;
+        minmaxImg.classList.remove("hidden");
+        minmaxLabel.classList.remove("hidden");
+        if (data.clahe_cnr !== undefined) {
+          minmaxCnr.innerText = `📈 CNR: ${data.clahe_cnr}`;
+          minmaxCnr.classList.remove("hidden");
+        }
       }
 
-      // Show cnr if available
-      if (data.minmax_cnr !== undefined) {
-        const minmaxCnr = document.getElementById("minmax-cnr");
-        minmaxCnr.innerText = `📈 CNR: ${data.minmax_cnr}`;
-        minmaxCnr.classList.remove("hidden");
-      }
-      
-      if (data.clahe_cnr !== undefined) {
-        const claheCnr = document.getElementById("clahe-cnr");
-        claheCnr.innerText = `📈 CNR: ${data.clahe_cnr}`;
-        claheCnr.classList.remove("hidden");
-      }      
+      document.getElementById("clahe-label").innerText = "MinMax Normalized Image";
+      document.getElementById("minmax-label").innerText = "CLAHE Enhanced Image";
     }
+    
 
     function showTripletImages(anchorURL, positiveURL, negativeURL, apDist = null, anDist = null, claimedWriter = null, closestWriter = null, closestWriterImgURL = null) {
       const timestamp = new Date().getTime();
@@ -339,43 +341,13 @@
     
       stats.innerHTML = content;
       openTripletModal();
-
       const claheImg = document.getElementById("clahe-preview");
       const claheLabel = document.getElementById("clahe-label");
       const claheCnr = document.getElementById("clahe-cnr");
-    
+      
       const minmaxImg = document.getElementById("minmax-preview");
       const minmaxLabel = document.getElementById("minmax-label");
       const minmaxCnr = document.getElementById("minmax-cnr");
-    
-      if (data.minmax_image_url) {
-        claheImg.src = data.minmax_image_url;  // show minmax image in CLAHE preview
-        claheImg.classList.remove("hidden");
-        claheLabel.classList.remove("hidden");
-        if (data.minmax_cnr !== undefined) {
-          claheCnr.innerText = `📈 CNR: ${data.minmax_cnr}`;
-          claheCnr.classList.remove("hidden");
-        }
-      }
-    
-      if (data.clahe_image_url) {
-        minmaxImg.src = data.clahe_image_url;  // show CLAHE image in MinMax preview
-        minmaxImg.classList.remove("hidden");
-        minmaxLabel.classList.remove("hidden");
-        if (data.clahe_cnr !== undefined) {
-          minmaxCnr.innerText = `📈 CNR: ${data.clahe_cnr}`;
-          minmaxCnr.classList.remove("hidden");
-        }
-      }
-    
-      // Raw image display remains unchanged
-      if (data.raw_image_url) {
-        const rawImg = document.getElementById("raw-preview");
-        const rawLabel = document.getElementById("raw-label");
-        rawImg.src = data.raw_image_url;
-        rawImg.classList.remove("hidden");
-        rawLabel.classList.remove("hidden");
-      }
     }
         
 
