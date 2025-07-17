@@ -117,16 +117,16 @@
           <p id="raw-label" class="hidden mt-2 text-sm text-gray-500">Raw Uploaded Image</p>
         </div>
         <div>
-          <img id="clahe-preview" class="hidden w-full rounded border border-gray-300" alt=" "/>
+          <img id="minmax-preview" class="hidden w-full rounded border border-gray-300" alt=" "/>
           <p id="minmax-label" class="hidden mt-2 text-sm text-gray-500">MinMax Normalized Image</p>
-          <p id="clahe-cnr" class="hidden mt-1 text-xs text-gray-600">
+          <p id="minmax-cnr" class="hidden mt-1 text-xs text-gray-600">
             <span class="text-gray-400">(higher = better contrast vs noise)</span>
           </p>
         </div>
         <div>
-          <img id="minmax-preview" class="hidden w-full rounded border border-gray-300" alt=" "/>
+          <img id="clahe-preview" class="hidden w-full rounded border border-gray-300" alt=" "/>
           <p id="clahe-label" class="hidden mt-2 text-sm text-gray-500">CLAHE Enhanced Image</p>
-          <p id="minmax-cnr" class="hidden mt-1 text-xs text-gray-600">
+          <p id="clahe-cnr" class="hidden mt-1 text-xs text-gray-600">
             <span class="text-gray-400">(higher = better contrast vs noise)</span>
           </p>
         </div>
@@ -246,8 +246,8 @@
         resultsList.innerHTML = `
           <li>✅ <strong>Result:</strong> ${
             data.result === "genuine"
-              ? "Accepted as Genuine"
-              : "Rejected as Forgery"
+              ? "Genuine"
+              : "Forged"
           }</li>
 
           <li>✏️ <strong>Distance:</strong> ${data.distance.toFixed(4)}</li>
@@ -267,9 +267,9 @@
         `;
 
       const previews = {
-        raw: " ",
-        clahe: " ",
-        minmax: " "
+        raw: "raw-preview",
+        clahe: "clahe-preview",
+        minmax: "minmax-preview"
       };
 
       for (const type in previews) {
@@ -339,6 +339,43 @@
     
       stats.innerHTML = content;
       openTripletModal();
+
+      const claheImg = document.getElementById("clahe-preview");
+      const claheLabel = document.getElementById("clahe-label");
+      const claheCnr = document.getElementById("clahe-cnr");
+    
+      const minmaxImg = document.getElementById("minmax-preview");
+      const minmaxLabel = document.getElementById("minmax-label");
+      const minmaxCnr = document.getElementById("minmax-cnr");
+    
+      if (data.minmax_image_url) {
+        claheImg.src = data.minmax_image_url;  // show minmax image in CLAHE preview
+        claheImg.classList.remove("hidden");
+        claheLabel.classList.remove("hidden");
+        if (data.minmax_cnr !== undefined) {
+          claheCnr.innerText = `📈 CNR: ${data.minmax_cnr}`;
+          claheCnr.classList.remove("hidden");
+        }
+      }
+    
+      if (data.clahe_image_url) {
+        minmaxImg.src = data.clahe_image_url;  // show CLAHE image in MinMax preview
+        minmaxImg.classList.remove("hidden");
+        minmaxLabel.classList.remove("hidden");
+        if (data.clahe_cnr !== undefined) {
+          minmaxCnr.innerText = `📈 CNR: ${data.clahe_cnr}`;
+          minmaxCnr.classList.remove("hidden");
+        }
+      }
+    
+      // Raw image display remains unchanged
+      if (data.raw_image_url) {
+        const rawImg = document.getElementById("raw-preview");
+        const rawLabel = document.getElementById("raw-label");
+        rawImg.src = data.raw_image_url;
+        rawImg.classList.remove("hidden");
+        rawLabel.classList.remove("hidden");
+      }
     }
         
 
