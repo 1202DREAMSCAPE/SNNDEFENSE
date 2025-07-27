@@ -15,3 +15,11 @@ base,writer_260,forged_3.png,0.0545,0.4982,writer_303,false_acceptance
 base,writer_260,forged_1.png,0.0523,0.4982,writer_310,false_acceptance
 base,writer_260,forged_2.png,0.0535,0.4982,writer_298,false_acceptance
 base,writer_260,forged_3.png,0.0545,0.4982,writer_303,false_acceptance
+base,writer_260,genuine_7.png,0.0000,0.4982,writer_260,true_accept
+base,writer_260,genuine_3.png,0.0000,0.4982,writer_260,true_accept
+base,writer_260,genuine_2.png,0.0000,0.4982,writer_260,true_accept
+base,writer_260,genuine_2.png,0.0000,0.4982,writer_260,true_accept
+base,writer_271,forged_7.png,0.0523,0.4982,writer_262,false_acceptance
+base,writer_261,genuine_2.png,0.0000,0.4982,writer_261,true_accept
+base,writer_271,forged_7.png,0.0523,0.4982,writer_262,false_acceptance
+base,writer_262,forged_6.png,0.0733,0.4982,writer_294,false_acceptance
