@@ -115,15 +115,6 @@ http://127.0.0.1:5000/
 
 ---
 
-## 🔍 Features
-
-- 🔁 Select writer and upload signature
-- 🧠 Choose Base (MinMax) or Enhanced (CLAHE + Triplet)
-- 🧪 Triplet Viewer to see Anchor, Positive, and Negative comparisons
-- 📊 Shows distances
-
----
-
 ## 📌 Notes
 
 - Ensure `.pkl` files are correctly placed if using precomputed embeddings.
