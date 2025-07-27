@@ -73,9 +73,8 @@ def preprocess_signature(image_path, preprocessing_type="clahe"):
     else:
         raise ValueError(f"Unknown preprocessing_type: {preprocessing_type}")
 
-    resized = cv2.resize(normalized, (220, 155))  # (W, H)
+    resized = cv2.resize(normalized, (220, 155))  
     final = np.expand_dims(resized, axis=-1)
 
-    # Replace edge count with CNR
     cnr_value = compute_cnr(resized)
     return final, cnr_value

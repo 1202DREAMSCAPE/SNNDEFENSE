@@ -2,7 +2,6 @@ from sklearn.metrics import roc_curve, f1_score
 import numpy as np
 from preprocess import preprocess_signature
 
-
 def calculate_youden_j_threshold(distances, labels):
     """
     Calculate the optimal threshold using Youden's J statistic.
@@ -41,9 +40,8 @@ def verify_signature(
     Returns result, distance, threshold, closest_writer, and rejection_type.
     """
 
-    # Set threshold if not provided
     if threshold is None:
-        threshold = 0.827 if model_type == "enhanced" else 0.4982339
+        threshold = 0.827 if model_type == "enhanced" else 0.4982339 #based on Youden's J statistic from the trained model
 
     # Step 1: Generate embedding if not provided
     if uploaded_emb is None:

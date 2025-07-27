@@ -5,7 +5,7 @@ import os
 # Ensure root-level imports for base and enhanced architectures
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
-from base import build_siamese_network         # For base model (contrastive loss)
+from base import build_siamese_network         # For base model 
 from enhanced import build_triplet_network     # For enhanced model (triplet loss)
 
 def load_siamese_model(model_path):
