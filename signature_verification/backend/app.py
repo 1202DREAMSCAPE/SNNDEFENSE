@@ -51,12 +51,17 @@ def verify_base():
 
     # Save uploaded file
     raw_path = f"{STATIC_TEMP}/{uploaded_file.filename}"
+    clahe_path = f"{STATIC_TEMP}/clahe_{uploaded_file.filename}"
     minmax_path = f"{STATIC_TEMP}/minmax_{uploaded_file.filename}"
     uploaded_file.save(raw_path)
 
     # Preprocess with MinMax and get edge count
     minmax_img, minmax_cnr_value = preprocess_signature(raw_path, preprocessing_type="minmax")
     cv2.imwrite(minmax_path, (minmax_img.squeeze() * 255).astype(np.uint8))
+
+    # CLAHE preprocessing + save
+    clahe_img, clahe_cnr_value = preprocess_signature(raw_path, preprocessing_type="clahe")
+    cv2.imwrite(clahe_path, (clahe_img.squeeze() * 255).astype(np.uint8))
 
     # Predict and normalize embedding
     raw_emb = base_model.predict(np.expand_dims(minmax_img, axis=0), verbose=0)[0].flatten()
@@ -115,8 +120,9 @@ def verify_base():
         "confidence": float(round(1 - (distance / threshold), 4)) if distance <= threshold else float(round(distance / threshold, 4)),
         "raw_image_url": f"/static/temp/{uploaded_file.filename}",
         "minmax_image_url": f"/static/temp/minmax_{uploaded_file.filename}",
-        "clahe_image_url": "",  # (CLAHE only for enhanced)
+        "clahe_image_url": f"/static/temp/clahe_{uploaded_file.filename}",  
         "minmax_cnr": round(minmax_cnr_value, 4),
+        "clahe_cnr": round(clahe_cnr_value, 4),                              
         "closest_writer": closest_writer,
         "rejection_type": rejection_type,
         "claimed_writer_id": claimed_writer_id
